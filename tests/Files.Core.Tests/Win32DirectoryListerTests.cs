@@ -34,16 +34,16 @@ public sealed class Win32DirectoryListerTests
         File.WriteAllText(Path.Combine(_root, "m.txt"), "12345");
         File.WriteAllText(Path.Combine(_root, "b.log"), "x");
 
-        var entries = new Win32DirectoryLister().List(_root);
+        DirectoryListing listing = new Win32DirectoryLister().List(_root);
 
-        Assert.HasCount(4, entries);
-        Assert.AreEqual("alpha", entries[0].Name);
-        Assert.AreEqual("zeta", entries[1].Name);
-        Assert.IsTrue(entries[0].IsDirectory);
-        Assert.AreEqual("b.log", entries[2].Name);
-        Assert.AreEqual("m.txt", entries[3].Name);
-        Assert.AreEqual(5, entries[3].SizeBytes);
-        Assert.AreEqual(".txt", entries[3].Extension);
+        Assert.AreEqual(4, listing.Count);
+        Assert.AreEqual("alpha", listing.Entries[0].Name);
+        Assert.AreEqual("zeta", listing.Entries[1].Name);
+        Assert.IsTrue(listing.Entries[0].IsDirectory);
+        Assert.AreEqual("b.log", listing.Entries[2].Name);
+        Assert.AreEqual("m.txt", listing.Entries[3].Name);
+        Assert.AreEqual(5, listing.Entries[3].SizeBytes);
+        Assert.AreEqual(".txt", listing.Entries[3].Extension);
     }
 
     [TestMethod]
@@ -54,28 +54,44 @@ public sealed class Win32DirectoryListerTests
         File.WriteAllText(Path.Combine(_root, "A.txt"), "a");
         File.WriteAllText(Path.Combine(_root, "b.txt"), "b");
 
-        var win32 = new Win32DirectoryLister().List(_root);
-        var managed = new FileSystemDirectoryLister().List(_root);
+        DirectoryListing win32 = new Win32DirectoryLister().List(_root);
+        DirectoryListing managed = new FileSystemDirectoryLister().List(_root);
 
         CollectionAssert.AreEqual(
-            managed.Select(e => e.Name).ToArray(),
-            win32.Select(e => e.Name).ToArray());
+            managed.Entries.Select(e => e.Name).ToArray(),
+            win32.Entries.Select(e => e.Name).ToArray());
     }
 
     [TestMethod]
-    public void List_FullPath_IsCombinedCorrectly()
+    public void List_MatchesManagedListerOnSizesAndTimes()
+    {
+        File.WriteAllText(Path.Combine(_root, "one.txt"), "abcdef");
+
+        DirectoryListing win32 = new Win32DirectoryLister().List(_root);
+        DirectoryListing managed = new FileSystemDirectoryLister().List(_root);
+
+        Assert.AreEqual(managed.Entries[0].SizeBytes, win32.Entries[0].SizeBytes);
+
+        // 两者都读 UTC 时间，允许 2 秒误差（文件系统时间戳精度差异）
+        double deltaSeconds = Math.Abs(
+            (managed.Entries[0].LastModified - win32.Entries[0].LastModified).TotalSeconds);
+        Assert.IsLessThan(2, deltaSeconds);
+    }
+
+    [TestMethod]
+    public void GetFullPath_IsCombinedCorrectly()
     {
         File.WriteAllText(Path.Combine(_root, "one.txt"), "x");
 
-        var entry = new Win32DirectoryLister().List(_root).Single();
+        DirectoryListing listing = new Win32DirectoryLister().List(_root);
 
-        Assert.AreEqual(Path.Combine(_root, "one.txt"), entry.FullPath);
+        Assert.AreEqual(Path.Combine(_root, "one.txt"), listing.GetFullPath(0));
     }
 
     [TestMethod]
     public void List_EmptyDirectory_ReturnsEmpty()
     {
-        Assert.IsEmpty(new Win32DirectoryLister().List(_root));
+        Assert.AreEqual(0, new Win32DirectoryLister().List(_root).Count);
     }
 
     [TestMethod]
@@ -98,9 +114,9 @@ public sealed class Win32DirectoryListerTests
         File.WriteAllText(hidden, "x");
         File.SetAttributes(hidden, FileAttributes.Hidden);
 
-        var entries = new Win32DirectoryLister().List(_root);
+        DirectoryListing listing = new Win32DirectoryLister().List(_root);
 
-        Assert.IsTrue(entries.Any(e => e.Name == "hidden.txt"));
+        Assert.IsTrue(listing.Entries.Any(e => e.Name == "hidden.txt"));
     }
 
     [TestMethod]

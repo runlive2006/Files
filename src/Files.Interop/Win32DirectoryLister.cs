@@ -13,27 +13,24 @@ namespace Files.Interop;
 public sealed class Win32DirectoryLister : IDirectoryLister
 {
     /// <inheritdoc />
-    public IReadOnlyList<FileSystemEntry> List(string directoryPath)
+    public DirectoryListing List(string directoryPath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directoryPath);
 
         FileEntry[] raw = Win32DirectoryEnumerator.ReadAll(directoryPath);
-        var entries = new List<FileSystemEntry>(raw.Length);
-        string basePath = PathUtility.EnsureTrailingSeparator(Path.GetFullPath(directoryPath));
 
-        foreach (var item in raw)
+        var entries = new FileSystemEntry[raw.Length];
+        for (int i = 0; i < raw.Length; i++)
         {
-            entries.Add(new FileSystemEntry
-            {
-                FullPath = basePath + item.Name,
-                Name = item.Name,
-                IsDirectory = item.IsDirectory,
-                SizeBytes = item.Size,
-                LastModified = item.LastWriteUtc,
-            });
+            FileEntry item = raw[i];
+            entries[i] = new FileSystemEntry(
+                item.Name,
+                item.IsDirectory,
+                item.Size,
+                item.LastWriteUtc);
         }
 
-        entries.Sort(static (left, right) =>
+        Array.Sort(entries, static (left, right) =>
         {
             if (left.IsDirectory != right.IsDirectory)
             {
@@ -43,6 +40,6 @@ public sealed class Win32DirectoryLister : IDirectoryLister
             return StringComparer.OrdinalIgnoreCase.Compare(left.Name, right.Name);
         });
 
-        return entries;
+        return new DirectoryListing(Path.GetFullPath(directoryPath), entries);
     }
 }

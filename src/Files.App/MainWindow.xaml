@@ -3,19 +3,48 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:Files.App"
         mc:Ignorable="d"
         Title="Files" Height="600" Width="960"
         WindowStartupLocation="CenterScreen">
+
+    <Window.Resources>
+        <!-- 列表（小图标）视图的项模板 -->
+        <DataTemplate x:Key="ListTemplate">
+            <StackPanel Orientation="Horizontal" Margin="2,1">
+                <Border Width="16" Height="16" Margin="0,0,6,0"
+                        Background="{Binding IconBrush}" CornerRadius="2" />
+                <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding SizeText}" Margin="12,0,0,0"
+                           Foreground="#888888" VerticalAlignment="Center" />
+            </StackPanel>
+        </DataTemplate>
+    </Window.Resources>
+
     <DockPanel>
         <ToolBarTray DockPanel.Dock="Top">
             <ToolBar>
-                <Button Content="上级目录" Click="OnGoUpClick" Padding="8,2" />
-                <Button Content="刷新" Click="OnRefreshClick" Padding="8,2" />
+                <Button x:Name="BackButton" Content="←" Click="OnBackClick"
+                        ToolTip="后退 (Alt+←)" Padding="8,2" MinWidth="34" />
+                <Button x:Name="ForwardButton" Content="→" Click="OnForwardClick"
+                        ToolTip="前进 (Alt+→)" Padding="8,2" MinWidth="34" />
+                <Button x:Name="UpButton" Content="↑" Click="OnGoUpClick"
+                        ToolTip="上级目录 (Alt+↑)" Padding="8,2" MinWidth="34" />
+                <Button Content="刷新" Click="OnRefreshClick" ToolTip="刷新 (F5)" Padding="8,2" />
                 <Separator />
-                <TextBlock x:Name="CurrentPathText"
-                           VerticalAlignment="Center"
-                           Margin="6,0"
-                           FontWeight="SemiBold" />
+                <TextBox x:Name="AddressBox" Width="420" Padding="4,2"
+                         VerticalContentAlignment="Center"
+                         KeyDown="OnAddressKeyDown"
+                         GotKeyboardFocus="OnAddressGotFocus"
+                         LostKeyboardFocus="OnAddressLostFocus"
+                         ToolTip="输入路径后回车（支持 %USERPROFILE% 等环境变量）" />
+                <Separator />
+                <TextBlock Text="视图" VerticalAlignment="Center" Margin="4,0" />
+                <ComboBox x:Name="ViewModeBox" Width="110" VerticalAlignment="Center"
+                          SelectionChanged="OnViewModeChanged">
+                    <ComboBoxItem Content="详情" Tag="Details" IsSelected="True" />
+                    <ComboBoxItem Content="列表" Tag="List" />
+                </ComboBox>
             </ToolBar>
         </ToolBarTray>
 
@@ -28,16 +57,34 @@
             </StatusBarItem>
         </StatusBar>
 
-        <ListView x:Name="EntriesList" Margin="4"
-                  MouseDoubleClick="OnEntryDoubleClick">
-            <ListView.View>
-                <GridView>
-                    <GridViewColumn Header="名称" Width="380" DisplayMemberBinding="{Binding Name}" />
-                    <GridViewColumn Header="类型" Width="100" DisplayMemberBinding="{Binding Kind}" />
-                    <GridViewColumn Header="大小" Width="110" DisplayMemberBinding="{Binding SizeText}" />
-                    <GridViewColumn Header="修改时间" Width="180" DisplayMemberBinding="{Binding LastModifiedText}" />
-                </GridView>
-            </ListView.View>
-        </ListView>
+        <Grid>
+            <ListView x:Name="EntriesList" Margin="4"
+                      SelectionMode="Extended"
+                      VirtualizingStackPanel.IsVirtualizing="True"
+                      VirtualizingStackPanel.VirtualizationMode="Recycling"
+                      ScrollViewer.CanContentScroll="True"
+                      MouseDoubleClick="OnEntryDoubleClick"
+                      PreviewKeyDown="OnListPreviewKeyDown">
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="名称" Width="360" local:ColumnSort.Key="Name">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Border Width="16" Height="16" Margin="0,0,6,0"
+                                                Background="{Binding IconBrush}" CornerRadius="2" />
+                                        <TextBlock Text="{Binding Name}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                        <GridViewColumn Header="类型" Width="110" DisplayMemberBinding="{Binding Kind}" local:ColumnSort.Key="Kind" />
+                        <GridViewColumn Header="大小" Width="110" DisplayMemberBinding="{Binding SizeText}" local:ColumnSort.Key="Size" />
+                        <GridViewColumn Header="修改时间" Width="170"
+                                        DisplayMemberBinding="{Binding LastModifiedText}" local:ColumnSort.Key="LastModified" />
+                    </GridView>
+                </ListView.View>
+            </ListView>
+        </Grid>
     </DockPanel>
 </Window>

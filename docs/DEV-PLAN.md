@@ -70,24 +70,32 @@ M5 打磨             ████                3 周   → RC → 1.0
 
 | 任务 | 状态 | 说明 |
 | --- | --- | --- |
-| 1.1 枚举层重写 | ✅ 完成 | `Files.Interop` 项目 + `FindFirstFileExW` + `SafeFindHandle`；已替换 UI 使用的实现 |
-| 1.4 性能探针 | ✅ 完成 | `StartupProbe`、`WorkingSetSampler`、`FrameTimer`；`--perf` 参数显示 HUD |
-| 1.5 性能基准台 | ✅ 完成 | `bench/Files.Bench` + `scripts/bench.ps1`，支持 `--gate` 供 CI 使用 |
-| 1.14 路径正确性库 | ✅ 完成 | `PathUtility`（长路径/UNC/保留名/Unicode 正规化）+ 20 个用例 |
-| 1.15 标签状态模型 | ✅ 完成 | `TabState` / `PaneState` / `LayoutNode` / `LayoutFactory` + 9 个用例 |
-| 1.2 EntryRow | 🟡 部分 | 已有预格式化行模型，但仍是 `class`（见 PERF-BASELINE §3.3） |
-| 1.3 虚拟化列表 | 🟡 部分 | 已启用虚拟化，Recycling 与视图模式切换待做 |
-| 1.6–1.13 | ⬜ 未开始 | |
+| 1.1 枚举层重写 | ✅ 完成 | `Files.Interop` + `FindFirstFileExW` + `SafeFindHandle`；已替换 UI 使用的实现 |
+| 1.2 EntryRow | ✅ 完成 | `FileSystemEntry` 改 `readonly struct`，视图行预格式化，无绑定转换器 |
+| 1.3 虚拟化列表 | 🟡 部分 | 详情 + 列表两种视图，`Recycling` 与项级滚动已开；图标/平铺视图需自研 `VirtualizingWrapPanel`，推到 M2 |
+| 1.4 性能探针 | ✅ 完成 | `StartupProbe`、`WorkingSetSampler`、`FrameTimer`；`--perf` 显示 HUD |
+| 1.5 性能基准台 | ✅ 完成 | `bench/Files.Bench` + `scripts/bench.ps1`，支持 `--gate` |
+| 1.6 异步命令基础设施 | 🟡 部分 | `LatestTaskRunner`（只保留最后一次请求）已完成；`AsyncRelayCommand` 待做 |
+| 1.7 导航 | ✅ 完成 | 地址栏（可编辑、支持环境变量）、后退/前进/向上、`NavigationHistory` 深度 50 |
+| 1.8 选择模型 | 🟡 部分 | `Ctrl+A` / `Ctrl+I` 反选、`Shift` 范围与 `Ctrl` 加选（由 ListView 提供）；框选待做 |
+| 1.9 基础操作 | ⬜ 未开始 | 新建/重命名/删除/复制粘贴（M3 换 `IFileOperation`） |
+| 1.10 排序与分组 | 🟡 部分 | 四列可排序、后台排序、文件夹优先、降序保持分组；分组视图待做 |
+| 1.11 列系统 | ✅ 完成 | 列宽可调并持久化到设置 |
+| 1.12 即时搜索 | ⬜ 未开始 | |
+| 1.13 设置子系统 | ✅ 完成 | 原子写、损坏自愈（`.corrupt`）、schema 迁移、窗口几何与跨屏可见性校验 |
+| 1.14 路径正确性库 | ✅ 完成 | `PathUtility`（长路径/UNC/保留名/Unicode NFC）+ 测试 |
+| 1.15 标签状态模型 | ✅ 完成 | `TabState` / `PaneState` / `LayoutNode` / `LayoutFactory` + 测试 |
 
 **已取得性能基线**（详见 [PERF-BASELINE.md](PERF-BASELINE.md)）：
 
-| 规模 | 枚举 | 枚举+映射+排序 | 预算 | 判定 |
-| --- | --- | --- | --- | --- |
-| 50,000 项 | 30.4ms | 69.7ms | 600ms | 达标 |
-| 100,000 项 | 55.8ms | 131.1ms | 1200ms | 达标 |
+| 规模 | 枚举 | 枚举+映射+排序 | 每项内存 | 预算 | 判定 |
+| --- | --- | --- | --- | --- | --- |
+| 50,000 项 | 30.4ms | 69.7ms | — | 600ms | 达标 |
+| 100,000 项 | 55.8ms | 131.1ms | 427 B → **248 B** | 1200ms | 达标 |
 
 > **结论：数据层不是瓶颈**，10 万项只占首屏预算的 22%，风险集中在 WPF 视图实例化。
-> 但发现每项约 427 字节，10 万项约占 42MB 托管堆 —— 已列入 M2 前的优化项。
+> 内存优化后每项 248 B、10 万项 23.6MB，已能支撑"四栏各 1000 项"的预算；
+> 但"四栏各 10 万项"仍需依赖 §4.2 的非活动标签不留视图约束。
 
 ### 2.3 退出判据（全部满足才进 M2）
 

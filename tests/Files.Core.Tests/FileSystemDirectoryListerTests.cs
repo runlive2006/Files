@@ -32,14 +32,14 @@ public sealed class FileSystemDirectoryListerTests
         File.WriteAllText(Path.Combine(_root, "aFile.txt"), "hello");
 
         var lister = new FileSystemDirectoryLister();
-        IReadOnlyList<FileSystemEntry> entries = lister.List(_root);
+        DirectoryListing listing = lister.List(_root);
 
-        Assert.HasCount(2, entries);
-        Assert.IsTrue(entries[0].IsDirectory, "文件夹应排在文件之前。");
-        Assert.AreEqual("zFolder", entries[0].Name);
-        Assert.AreEqual("aFile.txt", entries[1].Name);
-        Assert.AreEqual(5, entries[1].SizeBytes);
-        Assert.AreEqual(".txt", entries[1].Extension);
+        Assert.AreEqual(2, listing.Count);
+        Assert.IsTrue(listing.Entries[0].IsDirectory, "文件夹应排在文件之前。");
+        Assert.AreEqual("zFolder", listing.Entries[0].Name);
+        Assert.AreEqual("aFile.txt", listing.Entries[1].Name);
+        Assert.AreEqual(5, listing.Entries[1].SizeBytes);
+        Assert.AreEqual(".txt", listing.Entries[1].Extension);
     }
 
     [TestMethod]
@@ -55,5 +55,34 @@ public sealed class FileSystemDirectoryListerTests
     {
         var lister = new FileSystemDirectoryLister();
         Assert.ThrowsExactly<ArgumentException>(() => lister.List("  "));
+    }
+
+    [TestMethod]
+    public void List_DirectoryPath_IsAbsoluteAndHasNoTrailingSeparator()
+    {
+        DirectoryListing listing = new FileSystemDirectoryLister().List(_root);
+
+        Assert.IsTrue(Path.IsPathFullyQualified(listing.DirectoryPath));
+        Assert.DoesNotEndWith(listing.DirectoryPath, Path.DirectorySeparatorChar.ToString());
+    }
+
+    [TestMethod]
+    public void GetFullPath_CombinesDirectoryAndName()
+    {
+        File.WriteAllText(Path.Combine(_root, "one.txt"), "x");
+
+        DirectoryListing listing = new FileSystemDirectoryLister().List(_root);
+
+        Assert.AreEqual(Path.Combine(listing.DirectoryPath, "one.txt"), listing.GetFullPath(0));
+        Assert.AreEqual(
+            Path.Combine(listing.DirectoryPath, "one.txt"),
+            listing.GetFullPath(listing.Entries[0]));
+    }
+
+    [TestMethod]
+    public void FileSystemEntry_IsValueType_ToAvoidPerItemHeapOverhead()
+    {
+        // 这是内存预算的关键假设（PERF-BASELINE §3.2），被改动时必须显式察觉
+        Assert.IsTrue(typeof(FileSystemEntry).IsValueType);
     }
 }
