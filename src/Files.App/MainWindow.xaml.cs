@@ -207,6 +207,18 @@ public partial class MainWindow : Window
         UpdatePaneIndicator();
     }
 
+    /// <summary>刷新所有栏的当前标签（用于跨栏操作后同步视图）。</summary>
+    private async Task RefreshAllPanesAsync()
+    {
+        var tasks = new List<Task>(_paneViews.Count);
+        foreach (PaneView view in _paneViews)
+        {
+            tasks.Add(view.ViewModel.RefreshAsync());
+        }
+
+        await Task.WhenAll(tasks);
+    }
+
     private PaneViewModel GetViewModel(PaneState pane)
     {
         if (_viewModels.TryGetValue(pane, out PaneViewModel? existing))
@@ -262,6 +274,9 @@ public partial class MainWindow : Window
                     SetFocusedIndex(index);
                 }
             };
+
+            // 跨栏拖放移动后，源栏也需要刷新
+            view.ContentChanged += async (_, _) => await RefreshAllPanesAsync();
 
             _paneViews.Add(view);
             return view;

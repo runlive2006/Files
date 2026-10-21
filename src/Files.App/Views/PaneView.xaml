@@ -20,7 +20,9 @@
         <!-- 单个标签 -->
         <DataTemplate x:Key="TabTemplate">
             <Border x:Name="TabBorder" Padding="8,3" Margin="0,0,2,0"
-                    Background="#F0F0F0" BorderThickness="0,0,0,2" BorderBrush="Transparent">
+                    Background="#F0F0F0" BorderThickness="0,0,0,2" BorderBrush="Transparent"
+                    MouseLeftButtonDown="OnTabMouseLeftButtonDown"
+                    Cursor="Hand">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="{Binding Title}" VerticalAlignment="Center"
                                MaxWidth="160" TextTrimming="CharacterEllipsis"
@@ -81,13 +83,21 @@
                 </ItemsControl.ItemsPanel>
             </ItemsControl>
 
-            <ListView x:Name="EntriesList" Margin="2"
-                      SelectionMode="Extended"
-                      VirtualizingStackPanel.IsVirtualizing="True"
-                      VirtualizingStackPanel.VirtualizationMode="Recycling"
-                      ScrollViewer.CanContentScroll="True"
-                      MouseDoubleClick="OnEntryDoubleClick"
-                      PreviewKeyDown="OnListPreviewKeyDown">
+            <Grid>
+                <ListView x:Name="EntriesList" Margin="2"
+                          AllowDrop="True"
+                          SelectionMode="Extended"
+                          VirtualizingStackPanel.IsVirtualizing="True"
+                          VirtualizingStackPanel.VirtualizationMode="Recycling"
+                          ScrollViewer.CanContentScroll="True"
+                          MouseDoubleClick="OnEntryDoubleClick"
+                          PreviewKeyDown="OnListPreviewKeyDown"
+                          PreviewMouseLeftButtonDown="OnListPreviewMouseLeftButtonDown"
+                          PreviewMouseMove="OnListPreviewMouseMove"
+                          DragEnter="OnListDragOver"
+                          DragOver="OnListDragOver"
+                          DragLeave="OnListDragLeave"
+                          Drop="OnListDrop">
                 <ListView.ContextMenu>
                     <ContextMenu x:Name="EntryContextMenu" Opened="OnContextMenuOpened">
                         <MenuItem x:Name="MenuOpen" Header="打开" Click="OnOpenClick" />
@@ -125,7 +135,16 @@
                                         DisplayMemberBinding="{Binding LastModifiedText}" local:ColumnSort.Key="LastModified" />
                     </GridView>
                 </ListView.View>
-            </ListView>
+                </ListView>
+
+                <!-- 拖放目标高亮：不参与命中测试，避免干扰 DragOver -->
+                <Border x:Name="DropOverlay"
+                        Background="#220078D4"
+                        BorderBrush="#0078D4"
+                        BorderThickness="2"
+                        IsHitTestVisible="False"
+                        Visibility="Collapsed" />
+            </Grid>
         </DockPanel>
     </Border>
 </UserControl>

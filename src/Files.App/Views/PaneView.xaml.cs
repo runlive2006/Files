@@ -150,6 +150,37 @@ public partial class PaneView : UserControl
 
     private void OnNewTabClick(object sender, RoutedEventArgs e) => _ = AddTabAsync();
 
+    /// <summary>
+    /// 点击标签正文切换活动标签。
+    /// </summary>
+    /// <remarks>
+    /// 标签条用的是 <see cref="ItemsControl"/> 而不是 <c>ListBox</c>：
+    /// 后者会带上一整套选中态外观与焦点行为，与自定义标签样式冲突。
+    /// 代价是必须自己处理点击 —— 这正是"点击标签无法切换"的原因。
+    /// </remarks>
+    private void OnTabMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: TabViewModel tab })
+        {
+            return;
+        }
+
+        int index = ViewModel.Tabs.IndexOf(tab);
+        if (index < 0)
+        {
+            return;
+        }
+
+        if (ViewModel.ActiveIndex != index)
+        {
+            ViewModel.ActiveIndex = index;
+        }
+
+        // 兜底：即便索引未变化（例如关闭标签后索引恰好相同），也确保视图已重新绑定
+        BindActiveTab();
+        e.Handled = true;
+    }
+
     private void OnCloseTabClick(object sender, RoutedEventArgs e)
     {
         e.Handled = true;
@@ -667,6 +698,169 @@ public partial class PaneView : UserControl
 
         return UniqueNameGenerator.Exists(ViewModel.ActiveTab.CurrentPath, name) ? "该名称已存在。" : null;
     }
+
+    // ---------- 拖放 ----------
+
+    /// <summary>拖拽起始点，用于判断是否超过系统拖动阈值。</summary>
+    private Point _dragOrigin;
+
+    /// <summary>是否已具备发起拖拽的条件（按在某个条目上）。</summary>
+    private bool _dragArmed;
+
+    private void OnListPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _dragOrigin = e.GetPosition(null);
+
+        // 只有按在条目上才允许拖动；按在空白处应当用于框选/清空选择
+        _dragArmed = ItemsControl.ContainerFromElement(EntriesList, (DependencyObject)e.OriginalSource)
+            is ListViewItem;
+    }
+
+    private void OnListPreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_dragArmed || e.LeftButton != MouseButtonState.Pressed)
+        {
+            return;
+        }
+
+        Point current = e.GetPosition(null);
+        if (Math.Abs(current.X - _dragOrigin.X) < SystemParameters.MinimumHorizontalDragDistance
+            && Math.Abs(current.Y - _dragOrigin.Y) < SystemParameters.MinimumVerticalDragDistance)
+        {
+            return;
+        }
+
+        List<EntryRow> rows = SelectedRows;
+        if (rows.Count == 0)
+        {
+            return;
+        }
+
+        _dragArmed = false;
+
+        // 使用系统标准的 FileDrop 格式：既能拖到本程序的其他栏，
+        // 也能直接拖到资源管理器，反之亦然。
+        var files = new System.Collections.Specialized.StringCollection();
+        foreach (EntryRow row in rows)
+        {
+            files.Add(row.FullPath);
+        }
+
+        var data = new DataObject();
+        data.SetFileDropList(files);
+
+        DragDrop.DoDragDrop(EntriesList, data, DragDropEffects.Copy | DragDropEffects.Move);
+    }
+
+    private void OnListDragOver(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            e.Effects = DragDropEffects.None;
+            DropOverlay.Visibility = Visibility.Collapsed;
+            e.Handled = true;
+            return;
+        }
+
+        e.Effects = ResolveDragEffect(e);
+        DropOverlay.Visibility = Visibility.Visible;
+        e.Handled = true;
+    }
+
+    private void OnListDragLeave(object sender, DragEventArgs e) =>
+        DropOverlay.Visibility = Visibility.Collapsed;
+
+    private async void OnListDrop(object sender, DragEventArgs e)
+    {
+        DropOverlay.Visibility = Visibility.Collapsed;
+
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] items || items.Length == 0)
+        {
+            return;
+        }
+
+        string targetDirectory = ResolveDropDirectory(e);
+        if (string.IsNullOrEmpty(targetDirectory))
+        {
+            return;
+        }
+
+        DropAction action = ResolveDropAction(e, items[0], targetDirectory);
+
+        // 拖到条目原本所在的目录没有意义，直接忽略
+        string[] sources = [.. items.Where(path =>
+            !string.Equals(
+                Path.GetDirectoryName(path),
+                targetDirectory.TrimEnd('\\'),
+                StringComparison.OrdinalIgnoreCase))];
+
+        if (sources.Length == 0)
+        {
+            ViewModel.SetStatus("目标位置与源位置相同，已忽略。");
+            return;
+        }
+
+        IntPtr owner = OwnerHandle;
+        bool isCopy = action == DropAction.Copy;
+
+        FileOperationResult result = await Task.Run(() => isCopy
+            ? _fileOperator.Copy(sources, targetDirectory, owner)
+            : _fileOperator.Move(sources, targetDirectory, owner));
+
+        if (!result.Success)
+        {
+            ViewModel.SetStatus($"操作失败：{result.ErrorMessage}");
+            MessageBox.Show(
+                OwnerWindow!,
+                result.ErrorMessage ?? "未知错误",
+                "操作失败",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            return;
+        }
+
+        string targetName = Path.GetFileName(targetDirectory.TrimEnd('\\'));
+        ViewModel.SetStatus($"{(isCopy ? "已复制" : "已移动")} {sources.Length} 项 → {targetName}");
+        await ViewModel.RefreshAsync();
+
+        // 让其他栏也刷新：移动操作的源栏可能是本窗口的另一个栏
+        ContentChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>内容发生变化（供窗口刷新其他栏）。</summary>
+    public event EventHandler? ContentChanged;
+
+    /// <summary>解析拖放目标目录：悬停在文件夹上则用该文件夹，否则用当前目录。</summary>
+    private string ResolveDropDirectory(DragEventArgs e)
+    {
+        var container = ItemsControl.ContainerFromElement(EntriesList, (DependencyObject)e.OriginalSource)
+            as ListViewItem;
+
+        if (container?.DataContext is EntryRow { IsDirectory: true } row)
+        {
+            return row.FullPath;
+        }
+
+        return ViewModel.ActiveTab.CurrentPath;
+    }
+
+    private DragDropEffects ResolveDragEffect(DragEventArgs e)
+    {
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] items || items.Length == 0)
+        {
+            return DragDropEffects.None;
+        }
+
+        DropAction action = ResolveDropAction(e, items[0], ResolveDropDirectory(e));
+        return action == DropAction.Copy ? DragDropEffects.Copy : DragDropEffects.Move;
+    }
+
+    private static DropAction ResolveDropAction(DragEventArgs e, string sourcePath, string targetDirectory) =>
+        DropPolicy.Resolve(
+            controlPressed: (e.KeyStates & DragDropKeyStates.ControlKey) != 0,
+            shiftPressed: (e.KeyStates & DragDropKeyStates.ShiftKey) != 0,
+            sourcePath: sourcePath,
+            targetDirectory: targetDirectory);
 
     // ---------- 键盘 ----------
 

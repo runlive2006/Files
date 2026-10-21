@@ -127,10 +127,13 @@ signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /a Files.e
 ## 5. 打包命令（开发者用）
 
 ```powershell
-# 框架依赖（体积小，需目标机装 .NET 10 桌面运行时）
+# 唯一交付形态：框架依赖（需目标机装 .NET 10 桌面运行时）
 dotnet publish src/Files.App/Files.App.csproj -c Release -r win-x64 `
   --self-contained false -m:1 -o artifacts/Files-0.1.0-win-x64
 ```
 
-打包后请检查：`artifacts/Files-0.1.0-win-x64/data/` 不应存在于交付包中
-（那是运行后生成的，删除即可保持干净）。
+约定：
+
+- **不生成 zip**，直接交付目录；
+- **不生成自包含独立版**（单文件自解压还会写 `%TEMP%\.net`，与"数据只写程序目录"的约束冲突）；
+- 打包后检查 `artifacts/Files-0.1.0-win-x64/data/` 不应存在（那是运行后生成的）。
