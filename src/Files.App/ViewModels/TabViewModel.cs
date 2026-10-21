@@ -25,6 +25,7 @@ public sealed class TabViewModel : INotifyPropertyChanged, IDisposable
     private readonly IDirectoryLister _lister;
     private readonly LatestTaskRunner _runner = new();
     private readonly NavigationHistory _history = new();
+    private IconProvider _icons;
 
     private DirectoryListing? _listing;
     private string _addressText = string.Empty;
@@ -34,13 +35,15 @@ public sealed class TabViewModel : INotifyPropertyChanged, IDisposable
     private bool _isActive;
 
     /// <summary>创建标签视图模型。</summary>
-    public TabViewModel(TabState state, IDirectoryLister lister)
+    public TabViewModel(TabState state, IDirectoryLister lister, IconProvider icons)
     {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(lister);
+        ArgumentNullException.ThrowIfNull(icons);
 
         State = state;
         _lister = lister;
+        _icons = icons;
 
         if (Enum.TryParse(state.SortColumn, ignoreCase: true, out EntrySortColumn column))
         {
@@ -135,6 +138,12 @@ public sealed class TabViewModel : INotifyPropertyChanged, IDisposable
     /// <summary>当前列举结果。</summary>
     public DirectoryListing? Listing => _listing;
 
+    /// <summary>替换图标提供者（设置变更时调用）。</summary>
+    public void ReplaceIconProvider(IconProvider icons)
+    {
+        ArgumentNullException.ThrowIfNull(icons);
+        _icons = icons;
+    }
     /// <summary>设置状态文本。</summary>
     public void SetStatus(string message) => StatusText = message;
 
@@ -269,7 +278,7 @@ public sealed class TabViewModel : INotifyPropertyChanged, IDisposable
         Rows.Clear();
         for (int i = 0; i < listing.Count; i++)
         {
-            Rows.Add(EntryRow.From(listing, i));
+            Rows.Add(EntryRow.From(listing, i, _icons, ViewMode == ViewMode.Thumbnails));
         }
 
         double elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;

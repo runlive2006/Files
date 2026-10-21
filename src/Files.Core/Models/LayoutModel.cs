@@ -71,6 +71,9 @@ public enum ViewMode
 
     /// <summary>平铺。</summary>
     Tiles,
+
+    /// <summary>缩略图（大图标网格）。</summary>
+    Thumbnails,
 }
 
 /// <summary>

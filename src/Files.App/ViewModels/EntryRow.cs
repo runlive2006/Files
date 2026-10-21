@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Windows;
 using System.Windows.Media;
 using Files.Core.Models;
 
@@ -10,7 +11,11 @@ namespace Files.App.ViewModels;
 /// <remarks>
 /// 刻意做成不可变 record 且<b>不</b>实现 <see cref="System.ComponentModel.INotifyPropertyChanged"/>：
 /// 10 万项目录下，每行的事件订阅与可变状态会显著抬高内存占用
-/// （参见 PERF-BASELINE 的每项预算）。需要编辑某一行时再引入"仅活动行可变"的机制。
+/// （参见 PERF-BASELINE 的每项预算）。
+/// <para>
+/// 图标提供两种形态：真实系统图标（<see cref="Icon"/>）或按类型着色的方块
+/// （<see cref="IconBrush"/>）。为了让 XAML 不必写值转换器，可见性也在这里预先算好。
+/// </para>
 /// </remarks>
 public sealed record EntryRow(
     string Name,
@@ -19,10 +24,25 @@ public sealed record EntryRow(
     string Kind,
     string SizeText,
     string LastModifiedText,
-    Brush IconBrush)
+    Brush IconBrush,
+    ImageSource? Icon)
 {
+    /// <summary>真实图标的可见性。</summary>
+    public Visibility IconVisibility => Icon is null ? Visibility.Collapsed : Visibility.Visible;
+
+    /// <summary>占位色块的可见性（与真实图标互斥）。</summary>
+    public Visibility PlaceholderVisibility => Icon is null ? Visibility.Visible : Visibility.Collapsed;
+
     /// <summary>从列举结果构造第 <paramref name="index"/> 行。</summary>
-    public static EntryRow From(DirectoryListing listing, int index)
+    /// <param name="listing">列举结果。</param>
+    /// <param name="index">行下标。</param>
+    /// <param name="icons">图标提供者；为 <see langword="null"/> 时使用占位色块。</param>
+    /// <param name="largeIcon">是否使用大图标（缩略图视图）。</param>
+    public static EntryRow From(
+        DirectoryListing listing,
+        int index,
+        IconProvider? icons = null,
+        bool largeIcon = false)
     {
         FileSystemEntry entry = listing.Entries[index];
 
@@ -33,7 +53,8 @@ public sealed record EntryRow(
             DescribeKind(entry),
             entry.IsDirectory ? string.Empty : FormatSize(entry.SizeBytes),
             entry.LastModified.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture),
-            IconBrushes.For(entry));
+            IconBrushes.For(entry),
+            icons?.GetIcon(entry, largeIcon));
     }
 
     private static string DescribeKind(FileSystemEntry entry)
@@ -57,8 +78,7 @@ public sealed record EntryRow(
 }
 
 /// <summary>
-/// 占位的图标着色。真实 Shell 图标（<c>SHGetFileInfo</c> / <c>IImageList</c>）
-/// 属于 M3 任务 3.5，这里先用按类型着色的方块，避免过早引入逐项图标开销。
+/// 占位图标着色：系统图标关闭或取不到时使用。
 /// </summary>
 internal static class IconBrushes
 {

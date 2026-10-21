@@ -29,6 +29,9 @@ public sealed class AppSettings
     /// <summary>上次打开的目录（单栏兼容字段）。</summary>
     public string LastPath { get; set; } = string.Empty;
 
+    /// <summary>是否使用系统图标（关闭时用按类型着色的占位方块）。</summary>
+    public bool UseSystemIcons { get; set; } = true;
+
     /// <summary>布局模式：Single / HorizontalSplit / VerticalSplit / Quad。</summary>
     public string LayoutMode { get; set; } = "Single";
 

@@ -25,6 +25,7 @@ namespace Files.App;
 public partial class MainWindow : Window
 {
     private readonly IDirectoryLister _lister = new Win32DirectoryLister();
+    private IconProvider _icons = new(useSystemIcons: true);
     private readonly Dictionary<PaneState, PaneViewModel> _viewModels = [];
     private readonly FrameTimer _frameTimer = new();
     private readonly WorkingSetSampler _memory = new();
@@ -47,6 +48,11 @@ public partial class MainWindow : Window
             AppPaths.Current?.SettingsFile
             ?? Path.Combine(AppContext.BaseDirectory, AppPaths.DataFolderName, "settings.json"));
         _settings.Load();
+
+        // 图标开关先于任何栏创建，避免先建行再用错图标
+        _icons = new IconProvider(_settings.Current.UseSystemIcons);
+
+        MenuUseSystemIcons.IsChecked = _settings.Current.UseSystemIcons;
 
         _hudTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -126,7 +132,7 @@ public partial class MainWindow : Window
         ApplySavedRatios(settings);
 
         RenderLayout();
-        SelectLayoutButton(mode);
+        SyncLayoutMenu(mode);
 
         _ = NavigateAllPanesAsync();
     }
@@ -226,7 +232,7 @@ public partial class MainWindow : Window
             return existing;
         }
 
-        var viewModel = new PaneViewModel(pane, _lister);
+        var viewModel = new PaneViewModel(pane, _lister, _icons);
         viewModel.StatusChanged += (_, _) =>
         {
             if (_focusedIndex >= 0 && _focusedIndex < _paneViews.Count
@@ -265,7 +271,7 @@ public partial class MainWindow : Window
         if (node is PaneNode paneNode)
         {
             var view = new PaneView();
-            view.Initialize(GetViewModel(paneNode.Pane));
+            view.Initialize(GetViewModel(paneNode.Pane), _icons);
             view.PaneActivated += (_, _) =>
             {
                 int index = _paneViews.IndexOf(view);
@@ -382,32 +388,13 @@ public partial class MainWindow : Window
         }
 
         StatusText.Text = _paneViews[_focusedIndex].ViewModel.StatusText;
-        SyncViewModeBox();
+        SyncViewMenu(_paneViews[_focusedIndex].ViewModel.ViewMode);
         UpdatePaneIndicator();
     }
 
     private void UpdatePaneIndicator() =>
         PaneIndicatorText.Text = $"栏 {_focusedIndex + 1}/{Math.Max(1, _paneViews.Count)}";
 
-    private void SyncViewModeBox()
-    {
-        if (_focusedIndex < 0 || _focusedIndex >= _paneViews.Count)
-        {
-            return;
-        }
-
-        ViewMode mode = _paneViews[_focusedIndex].ViewModel.ViewMode;
-        string tag = mode == ViewMode.List ? "List" : "Details";
-
-        foreach (ComboBoxItem item in ViewModeBox.Items)
-        {
-            if (string.Equals(item.Tag as string, tag, StringComparison.OrdinalIgnoreCase))
-            {
-                ViewModeBox.SelectedItem = item;
-                break;
-            }
-        }
-    }
 
     // ---------- 布局切换 ----------
 
@@ -430,17 +417,18 @@ public partial class MainWindow : Window
         _focusedIndex = 0;
 
         RenderLayout();
-        SelectLayoutButton(target);
+        SyncLayoutMenu(target);
 
         _ = NavigateAllPanesAsync();
     }
 
-    private void SelectLayoutButton(PaneLayout mode)
+    /// <summary>同步"分栏方式"菜单的勾选状态。</summary>
+    private void SyncLayoutMenu(PaneLayout mode)
     {
-        LayoutSingleButton.IsEnabled = mode != PaneLayout.Single;
-        LayoutHorizontalButton.IsEnabled = mode != PaneLayout.HorizontalSplit;
-        LayoutVerticalButton.IsEnabled = mode != PaneLayout.VerticalSplit;
-        LayoutQuadButton.IsEnabled = mode != PaneLayout.Quad;
+        MenuLayoutSingle.IsChecked = mode == PaneLayout.Single;
+        MenuLayoutHorizontal.IsChecked = mode == PaneLayout.HorizontalSplit;
+        MenuLayoutVertical.IsChecked = mode == PaneLayout.VerticalSplit;
+        MenuLayoutQuad.IsChecked = mode == PaneLayout.Quad;
     }
 
     private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
@@ -503,17 +491,22 @@ public partial class MainWindow : Window
 
     private void OnDeleteClick(object sender, RoutedEventArgs e) => _ = FocusedPane?.DeleteAsync(DeleteMode.Recycle);
 
-    private void OnViewModeChanged(object sender, SelectionChangedEventArgs e)
+    private void OnCopyClick(object sender, RoutedEventArgs e) => FocusedPane?.CopySelection();
+
+    private void OnCutClick(object sender, RoutedEventArgs e) => FocusedPane?.CutSelection();
+
+    private void OnPasteClick(object sender, RoutedEventArgs e) => _ = FocusedPane?.PasteAsync();
+
+    // ---------- 视图菜单 ----------
+
+    private void OnViewDetailsClick(object sender, RoutedEventArgs e) => SetViewMode(ViewMode.Details);
+
+    private void OnViewListClick(object sender, RoutedEventArgs e) => SetViewMode(ViewMode.List);
+
+    private void OnViewThumbnailsClick(object sender, RoutedEventArgs e) => SetViewMode(ViewMode.Thumbnails);
+
+    private void SetViewMode(ViewMode mode)
     {
-        if (ViewModeBox.SelectedItem is not ComboBoxItem { Tag: string tag })
-        {
-            return;
-        }
-
-        ViewMode mode = string.Equals(tag, "List", StringComparison.OrdinalIgnoreCase)
-            ? ViewMode.List
-            : ViewMode.Details;
-
         PaneView? pane = FocusedPane;
         if (pane is null)
         {
@@ -522,6 +515,37 @@ public partial class MainWindow : Window
 
         pane.ViewModel.ApplyViewMode(mode);
         pane.ApplyViewMode(mode);
+
+        // 缩略图用大图标，其余用 16×16；切换后需要重读以重建行
+        _ = pane.ReloadIconsAsync();
+
+        SyncViewMenu(mode);
+    }
+
+    private void SyncViewMenu(ViewMode mode)
+    {
+        MenuViewDetails.IsChecked = mode == ViewMode.Details;
+        MenuViewList.IsChecked = mode == ViewMode.List;
+        MenuViewThumbnails.IsChecked = mode == ViewMode.Thumbnails;
+    }
+
+    // ---------- 设置菜单 ----------
+
+    private void OnToggleSystemIconsClick(object sender, RoutedEventArgs e)
+    {
+        bool enabled = MenuUseSystemIcons.IsChecked;
+        _settings.Current.UseSystemIcons = enabled;
+
+        // 图标在行构造时确定，切换后必须整体重建
+        _icons = new IconProvider(enabled);
+
+        foreach (PaneView view in _paneViews)
+        {
+            view.ReplaceIconProvider(_icons);
+            _ = view.ReloadIconsAsync();
+        }
+
+        StatusText.Text = enabled ? "已启用系统图标" : "已改用占位图标";
     }
 
     // ---------- 性能 HUD ----------

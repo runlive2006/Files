@@ -7,6 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\Files.ico</ApplicationIcon>
     <AssemblyName>Files</AssemblyName>
     <RootNamespace>Files.App</RootNamespace>
     <Product>Files</Product>
@@ -19,6 +20,11 @@
     <!-- 测试版：允许把调试符号一起产出，便于定位崩溃 -->
     <DebugType>embedded</DebugType>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 窗口图标与任务栏图标 -->
+    <Resource Include="Assets\Files.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Files.Core\Files.Core.csproj" />

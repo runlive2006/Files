@@ -4,16 +4,39 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:local="clr-namespace:Files.App"
+             xmlns:views="clr-namespace:Files.App.Views"
              mc:Ignorable="d">
 
     <UserControl.Resources>
+        <!-- 列表视图的项模板 -->
         <DataTemplate x:Key="ListTemplate">
             <StackPanel Orientation="Horizontal" Margin="2,1">
-                <Border Width="16" Height="16" Margin="0,0,6,0"
-                        Background="{Binding IconBrush}" CornerRadius="2" />
+                <Grid Width="16" Height="16" Margin="0,0,6,0">
+                    <Border Background="{Binding IconBrush}" CornerRadius="2"
+                            Visibility="{Binding PlaceholderVisibility}" />
+                    <Image Source="{Binding Icon}" Stretch="Uniform"
+                           RenderOptions.BitmapScalingMode="HighQuality"
+                           Visibility="{Binding IconVisibility}" />
+                </Grid>
                 <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
                 <TextBlock Text="{Binding SizeText}" Margin="12,0,0,0"
                            Foreground="#888888" VerticalAlignment="Center" />
+            </StackPanel>
+        </DataTemplate>
+
+        <!-- 缩略图视图的项模板 -->
+        <DataTemplate x:Key="ThumbnailTemplate">
+            <StackPanel Margin="4" HorizontalAlignment="Center">
+                <Grid Width="56" Height="56" HorizontalAlignment="Center">
+                    <Border Background="{Binding IconBrush}" CornerRadius="4"
+                            Visibility="{Binding PlaceholderVisibility}" />
+                    <Image Source="{Binding Icon}" Stretch="Uniform"
+                           RenderOptions.BitmapScalingMode="HighQuality"
+                           Visibility="{Binding IconVisibility}" />
+                </Grid>
+                <TextBlock Text="{Binding Name}" Margin="0,4,0,0"
+                           TextAlignment="Center" TextTrimming="CharacterEllipsis"
+                           MaxWidth="108" ToolTip="{Binding Name}" />
             </StackPanel>
         </DataTemplate>
 
@@ -42,7 +65,8 @@
         </DataTemplate>
     </UserControl.Resources>
 
-    <Border x:Name="FocusBorder" BorderThickness="2" BorderBrush="Transparent">
+    <Border x:Name="FocusBorder" BorderThickness="2" BorderBrush="Transparent"
+            PreviewMouseDown="OnPanePreviewMouseDown">
         <DockPanel>
             <!-- 栏头：本栏独立的导航 -->
             <Grid DockPanel.Dock="Top" Margin="2,2,2,0">
@@ -98,43 +122,48 @@
                           DragOver="OnListDragOver"
                           DragLeave="OnListDragLeave"
                           Drop="OnListDrop">
-                <ListView.ContextMenu>
-                    <ContextMenu x:Name="EntryContextMenu" Opened="OnContextMenuOpened">
-                        <MenuItem x:Name="MenuOpen" Header="打开" Click="OnOpenClick" />
-                        <Separator />
-                        <MenuItem Header="新建文件夹" Click="OnNewFolderClick" />
-                        <MenuItem x:Name="MenuRename" Header="重命名" Click="OnRenameClick" InputGestureText="F2" />
-                        <Separator />
-                        <MenuItem x:Name="MenuCopy" Header="复制" Click="OnCopyClick" InputGestureText="Ctrl+C" />
-                        <MenuItem x:Name="MenuCut" Header="剪切" Click="OnCutClick" InputGestureText="Ctrl+X" />
-                        <MenuItem x:Name="MenuPaste" Header="粘贴" Click="OnPasteClick" InputGestureText="Ctrl+V" />
-                        <Separator />
-                        <MenuItem x:Name="MenuDelete" Header="删除" Click="OnDeleteClick" InputGestureText="Del" />
-                        <MenuItem x:Name="MenuPermanentDelete" Header="永久删除"
-                                  Click="OnPermanentDeleteClick" InputGestureText="Shift+Del" />
-                        <Separator />
-                        <MenuItem x:Name="MenuCopyPath" Header="复制路径" Click="OnCopyPathClick" />
-                    </ContextMenu>
-                </ListView.ContextMenu>
-                <ListView.View>
-                    <GridView>
-                        <GridViewColumn Header="名称" Width="320" local:ColumnSort.Key="Name">
-                            <GridViewColumn.CellTemplate>
-                                <DataTemplate>
-                                    <StackPanel Orientation="Horizontal">
-                                        <Border Width="16" Height="16" Margin="0,0,6,0"
-                                                Background="{Binding IconBrush}" CornerRadius="2" />
-                                        <TextBlock Text="{Binding Name}" />
-                                    </StackPanel>
-                                </DataTemplate>
-                            </GridViewColumn.CellTemplate>
-                        </GridViewColumn>
-                        <GridViewColumn Header="类型" Width="90" DisplayMemberBinding="{Binding Kind}" local:ColumnSort.Key="Kind" />
-                        <GridViewColumn Header="大小" Width="90" DisplayMemberBinding="{Binding SizeText}" local:ColumnSort.Key="Size" />
-                        <GridViewColumn Header="修改时间" Width="150"
-                                        DisplayMemberBinding="{Binding LastModifiedText}" local:ColumnSort.Key="LastModified" />
-                    </GridView>
-                </ListView.View>
+                    <ListView.ContextMenu>
+                        <ContextMenu x:Name="EntryContextMenu" Opened="OnContextMenuOpened">
+                            <MenuItem x:Name="MenuOpen" Header="打开" Click="OnOpenClick" />
+                            <Separator />
+                            <MenuItem Header="新建文件夹" Click="OnNewFolderClick" />
+                            <MenuItem x:Name="MenuRename" Header="重命名" Click="OnRenameClick" InputGestureText="F2" />
+                            <Separator />
+                            <MenuItem x:Name="MenuCopy" Header="复制" Click="OnCopyClick" InputGestureText="Ctrl+C" />
+                            <MenuItem x:Name="MenuCut" Header="剪切" Click="OnCutClick" InputGestureText="Ctrl+X" />
+                            <MenuItem x:Name="MenuPaste" Header="粘贴" Click="OnPasteClick" InputGestureText="Ctrl+V" />
+                            <Separator />
+                            <MenuItem x:Name="MenuDelete" Header="删除" Click="OnDeleteClick" InputGestureText="Del" />
+                            <MenuItem x:Name="MenuPermanentDelete" Header="永久删除"
+                                      Click="OnPermanentDeleteClick" InputGestureText="Shift+Del" />
+                            <Separator />
+                            <MenuItem x:Name="MenuCopyPath" Header="复制路径" Click="OnCopyPathClick" />
+                        </ContextMenu>
+                    </ListView.ContextMenu>
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Header="名称" Width="320" local:ColumnSort.Key="Name">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Grid Width="16" Height="16" Margin="0,0,6,0">
+                                                <Border Background="{Binding IconBrush}" CornerRadius="2"
+                                                        Visibility="{Binding PlaceholderVisibility}" />
+                                                <Image Source="{Binding Icon}" Stretch="Uniform"
+                                                       RenderOptions.BitmapScalingMode="HighQuality"
+                                                       Visibility="{Binding IconVisibility}" />
+                                            </Grid>
+                                            <TextBlock Text="{Binding Name}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="类型" Width="90" DisplayMemberBinding="{Binding Kind}" local:ColumnSort.Key="Kind" />
+                            <GridViewColumn Header="大小" Width="90" DisplayMemberBinding="{Binding SizeText}" local:ColumnSort.Key="Size" />
+                            <GridViewColumn Header="修改时间" Width="150"
+                                            DisplayMemberBinding="{Binding LastModifiedText}" local:ColumnSort.Key="LastModified" />
+                        </GridView>
+                    </ListView.View>
                 </ListView>
 
                 <!-- 拖放目标高亮：不参与命中测试，避免干扰 DragOver -->

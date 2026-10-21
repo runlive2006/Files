@@ -27,6 +27,8 @@ public partial class PaneView : UserControl
     private readonly IFileOperator _fileOperator = new ShellFileOperator();
     private GridView? _detailsView;
     private DataTemplate? _listTemplate;
+    private DataTemplate? _thumbnailTemplate;
+    private IconProvider? _icons;
     private TabViewModel? _boundTab;
     private bool _switchingTab;
 
@@ -44,15 +46,18 @@ public partial class PaneView : UserControl
     public event EventHandler? PaneActivated;
 
     /// <summary>绑定视图模型。</summary>
-    public void Initialize(PaneViewModel viewModel)
+    public void Initialize(PaneViewModel viewModel, IconProvider icons)
     {
         ArgumentNullException.ThrowIfNull(viewModel);
+        ArgumentNullException.ThrowIfNull(icons);
 
         ViewModel = viewModel;
+        _icons = icons;
         DataContext = viewModel;
 
         _detailsView = (GridView)EntriesList.View;
         _listTemplate = (DataTemplate)FindResource("ListTemplate");
+        _thumbnailTemplate = (DataTemplate)FindResource("ThumbnailTemplate");
 
         AddHandler(GridViewColumnHeader.ClickEvent, new RoutedEventHandler(OnColumnHeaderClick));
         EntriesList.PreviewMouseRightButtonDown += OnListRightButtonDown;
@@ -321,6 +326,32 @@ public partial class PaneView : UserControl
         return null;
     }
 
+    /// <summary>
+    /// 点击本栏任意位置都切换焦点栏。
+    /// </summary>
+    /// <remarks>
+    /// 只依赖 <c>GotKeyboardFocus</c> 不够：若焦点已经在本栏内部，
+    /// 再点击本栏的空白处不会触发键盘焦点事件，栏间切换会显得"点不动"。
+    /// 因此在最外层 Border 上监听鼠标按下，覆盖标题、地址栏、标签条、列表空白区。
+    /// </remarks>
+    private void OnPanePreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        PaneActivated?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>替换图标提供者（设置变更时调用），并同步到所有标签。</summary>
+    public void ReplaceIconProvider(IconProvider icons)
+    {
+        ArgumentNullException.ThrowIfNull(icons);
+        _icons = icons;
+        ViewModel.ReplaceIconProvider(icons);
+    }
+    /// <summary>图标设置变化后重建行（图标在行构造时确定，无法就地切换）。</summary>
+    public async Task ReloadIconsAsync()
+    {
+        await ViewModel.ActiveTab.RefreshAsync();
+        ApplyViewMode(ViewModel.ActiveTab.ViewMode);
+    }
     // ---------- 焦点 ----------
 
     /// <inheritdoc />
@@ -378,11 +409,35 @@ public partial class PaneView : UserControl
     private void OnAddressLostFocus(object sender, KeyboardFocusChangedEventArgs e) =>
         AddressBox.Text = ViewModel.ActiveTab.CurrentPath;
 
+    /// <summary>
+    /// 双击条目：文件夹进入，文件用系统默认程序打开。
+    /// </summary>
     private void OnEntryDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (EntriesList.SelectedItem is EntryRow { IsDirectory: true } row)
+        if (EntriesList.SelectedItem is not EntryRow row)
+        {
+            return;
+        }
+
+        if (row.IsDirectory)
         {
             _ = ViewModel.ActiveTab.NavigateAsync(row.FullPath);
+            return;
+        }
+
+        OpenWithShell(row.FullPath);
+    }
+
+    /// <summary>用系统关联程序打开文件。</summary>
+    private void OpenWithShell(string path)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception)
+        {
+            ViewModel.SetStatus($"无法打开：{ex.Message}");
         }
     }
 
@@ -410,15 +465,30 @@ public partial class PaneView : UserControl
     /// <summary>应用视图模式。</summary>
     public void ApplyViewMode(ViewMode mode)
     {
-        if (mode == ViewMode.List)
+        switch (mode)
         {
-            EntriesList.View = null;
-            EntriesList.ItemTemplate = _listTemplate;
-        }
-        else
-        {
-            EntriesList.View = _detailsView;
-            EntriesList.ItemTemplate = null;
+            case ViewMode.List:
+                EntriesList.View = null;
+                EntriesList.ItemTemplate = _listTemplate;
+                EntriesList.ItemsPanel = null;
+                break;
+
+            case ViewMode.Thumbnails:
+                EntriesList.View = null;
+                EntriesList.ItemTemplate = _thumbnailTemplate;
+
+                // 网格布局：换成可虚拟化的换行面板，否则大目录会一次性建满容器
+                var panelFactory = new FrameworkElementFactory(typeof(VirtualizingWrapPanel));
+                panelFactory.SetValue(VirtualizingWrapPanel.ItemWidthProperty, 128.0);
+                panelFactory.SetValue(VirtualizingWrapPanel.ItemHeightProperty, 104.0);
+                EntriesList.ItemsPanel = new ItemsPanelTemplate(panelFactory);
+                break;
+
+            default:
+                EntriesList.View = _detailsView;
+                EntriesList.ItemTemplate = null;
+                EntriesList.ItemsPanel = null;
+                break;
         }
     }
 

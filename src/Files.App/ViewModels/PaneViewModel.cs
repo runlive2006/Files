@@ -18,17 +18,20 @@ public sealed class PaneViewModel : INotifyPropertyChanged, IDisposable
     private const int MaxClosedTabHistory = 10;
 
     private readonly IDirectoryLister _lister;
+    private IconProvider _icons;
     private readonly Stack<TabState> _closedTabs = new();
     private bool _isFocused;
 
     /// <summary>创建栏视图模型。</summary>
-    public PaneViewModel(PaneState state, IDirectoryLister lister)
+    public PaneViewModel(PaneState state, IDirectoryLister lister, IconProvider icons)
     {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(lister);
+        ArgumentNullException.ThrowIfNull(icons);
 
         State = state;
         _lister = lister;
+        _icons = icons;
 
         Tabs = [];
         foreach (TabState tabState in state.Tabs)
@@ -94,6 +97,17 @@ public sealed class PaneViewModel : INotifyPropertyChanged, IDisposable
     /// <summary>活动标签的视图模式（转发）。</summary>
     public ViewMode ViewMode => ActiveTab.ViewMode;
 
+    /// <summary>替换图标提供者（设置变更时调用），并同步到全部标签。</summary>
+    public void ReplaceIconProvider(IconProvider icons)
+    {
+        ArgumentNullException.ThrowIfNull(icons);
+        _icons = icons;
+
+        foreach (TabViewModel tab in Tabs)
+        {
+            tab.ReplaceIconProvider(icons);
+        }
+    }
     /// <summary>把视图模式应用到活动标签。</summary>
     public void ApplyViewMode(ViewMode mode) => ActiveTab.ApplyViewMode(mode);
 
@@ -220,7 +234,7 @@ public sealed class PaneViewModel : INotifyPropertyChanged, IDisposable
 
     private TabViewModel CreateTab(TabState state)
     {
-        var viewModel = new TabViewModel(state, _lister);
+        var viewModel = new TabViewModel(state, _lister, _icons);
         viewModel.StatusChanged += (_, _) =>
         {
             if (ReferenceEquals(viewModel, ActiveTab))
