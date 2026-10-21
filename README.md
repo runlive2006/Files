@@ -2,6 +2,14 @@
 
 C# (.NET 10 / WPF) 桌面文件管理器。
 
+## 文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [docs/PRD.md](docs/PRD.md) | 产品需求：定位、多栏模型、Win7 功能覆盖矩阵、性能预算、架构约束、风险 |
+| [docs/DEV-PLAN.md](docs/DEV-PLAN.md) | 开发计划：M1–M5 任务分解、估时、退出判据、测试矩阵、阻塞项 |
+| [docs/adr/ADR-001](docs/adr/ADR-001-runtime-and-ui-framework.md) | 运行时与 UI 框架选型（含 Win7 兼容性事实核查）— **待签字** |
+
 ## 解决方案结构
 
 | 路径 | 说明 |
