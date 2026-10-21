@@ -43,10 +43,9 @@ public partial class MainWindow : Window
         _perfHudEnabled = Environment.GetCommandLineArgs()
             .Any(arg => string.Equals(arg, "--perf", StringComparison.OrdinalIgnoreCase));
 
-        _settings = new SettingsService(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "Files",
-            "settings.json"));
+        _settings = new SettingsService(
+            AppPaths.Current?.SettingsFile
+            ?? Path.Combine(AppContext.BaseDirectory, AppPaths.DataFolderName, "settings.json"));
         _settings.Load();
 
         _hudTimer = new DispatcherTimer(DispatcherPriority.Background)
