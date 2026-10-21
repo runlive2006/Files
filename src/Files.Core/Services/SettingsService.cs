@@ -26,8 +26,27 @@ public sealed class AppSettings
     /// <summary>视图模式。</summary>
     public string ViewMode { get; set; } = "Details";
 
-    /// <summary>上次打开的目录。</summary>
+    /// <summary>上次打开的目录（单栏兼容字段）。</summary>
     public string LastPath { get; set; } = string.Empty;
+
+    /// <summary>布局模式：Single / HorizontalSplit / VerticalSplit / Quad。</summary>
+    public string LayoutMode { get; set; } = "Single";
+
+    /// <summary>各栏的路径，按从左到右、从上到下的顺序。</summary>
+    public List<PaneSettings> Panes { get; set; } = [];
+
+    /// <summary>各分裂节点的分隔比例，按遍历顺序。</summary>
+    public List<double> SplitRatios { get; set; } = [];
+}
+
+/// <summary>单栏的持久化状态。</summary>
+public sealed class PaneSettings
+{
+    /// <summary>该栏当前目录。</summary>
+    public string Path { get; set; } = string.Empty;
+
+    /// <summary>视图模式。</summary>
+    public string ViewMode { get; set; } = "Details";
 }
 
 /// <summary>窗口几何设置。</summary>

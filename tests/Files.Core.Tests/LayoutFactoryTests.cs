@@ -102,6 +102,80 @@ public sealed class LayoutFactoryTests
     }
 
     [TestMethod]
+    public void Create_ReusesFocusedPaneInstance_SoItsStateIsNotLost()
+    {
+        var pane = new PaneState
+        {
+            Tabs = [Tab(@"D:\Keep")],
+            ActiveTabIndex = 0,
+        };
+        var current = new PaneNode { Pane = pane };
+
+        var quad = LayoutFactory.Create(current, PaneLayout.Quad, focusedPaneIndex: 0);
+
+        // 焦点栏必须是同一个实例，否则切换布局会丢掉它已加载的目录与选择
+        Assert.AreSame(pane, LayoutFactory.CollectPanes(quad)[0]);
+    }
+
+    [TestMethod]
+    public void Create_ClonesInheritFocusedPanePath()
+    {
+        var pane = new PaneState
+        {
+            Tabs = [Tab(@"D:\Source")],
+            ActiveTabIndex = 0,
+        };
+        var current = new PaneNode { Pane = pane };
+
+        var quad = LayoutFactory.Create(current, PaneLayout.Quad, focusedPaneIndex: 0);
+        var panes = LayoutFactory.CollectPanes(quad);
+
+        Assert.HasCount(4, panes);
+        Assert.IsTrue(panes.All(p => p.ActiveTab.Path == @"D:\Source"));
+    }
+
+    [TestMethod]
+    public void Create_FromQuadToSingle_KeepsOnlyFocusedPane()
+    {
+        var quad = LayoutFactory.Create(SinglePane(@"C:\A"), PaneLayout.Quad);
+        var panes = LayoutFactory.CollectPanes(quad);
+
+        // 把第 3 栏当作焦点栏，切回单栏后应当只剩它
+        var single = LayoutFactory.Create(quad, PaneLayout.Single, focusedPaneIndex: 2);
+
+        Assert.AreEqual(1, LayoutFactory.CountPanes(single));
+        Assert.AreSame(panes[2], LayoutFactory.CollectPanes(single)[0]);
+    }
+
+    [TestMethod]
+    public void Create_FocusedPaneIndexOutOfRange_IsClamped()
+    {
+        var quad = LayoutFactory.Create(SinglePane(@"C:\A"), PaneLayout.Quad);
+
+        var single = LayoutFactory.Create(quad, PaneLayout.Single, focusedPaneIndex: 99);
+
+        Assert.AreEqual(1, LayoutFactory.CountPanes(single));
+    }
+
+    [TestMethod]
+    public void CollectSplits_ReturnsAllSplitNodes()
+    {
+        var quad = LayoutFactory.Create(SinglePane(), PaneLayout.Quad);
+        var splits = LayoutFactory.CollectSplits(quad);
+
+        // 田字四栏 = 1 个顶层左右分裂 + 2 个上下分裂
+        Assert.HasCount(3, splits);
+        Assert.AreEqual(SplitDirection.Horizontal, splits[0].Direction);
+    }
+
+    [TestMethod]
+    public void CollectSplits_ForSinglePane_IsEmpty()
+    {
+        var single = LayoutFactory.Create(SinglePane(), PaneLayout.Single);
+        Assert.IsEmpty(LayoutFactory.CollectSplits(single));
+    }
+
+    [TestMethod]
     public void ActiveTab_WithMultipleTabs_ReturnsSelectedOne()
     {
         var pane = new PaneState

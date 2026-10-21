@@ -1,0 +1,546 @@
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using Files.App.ViewModels;
+using Files.Core.Models;
+using Files.Core.Services;
+using Files.Interop;
+
+namespace Files.App.Views;
+
+/// <summary>
+/// 单栏视图：独立的导航、列表与文件操作。
+/// </summary>
+public partial class PaneView : UserControl
+{
+    private static readonly Brush FocusBrush = CreateFrozen(Color.FromRgb(0x00, 0x78, 0xD4));
+
+    private readonly IFileOperator _fileOperator = new ShellFileOperator();
+    private GridView? _detailsView;
+    private DataTemplate? _listTemplate;
+
+    /// <summary>创建栏视图。</summary>
+    public PaneView()
+    {
+        InitializeComponent();
+        Loaded += OnLoaded;
+    }
+
+    /// <summary>本栏的视图模型。</summary>
+    public PaneViewModel ViewModel { get; private set; } = null!;
+
+    /// <summary>栏获得焦点时触发（供窗口更新焦点栏）。</summary>
+    public event EventHandler? PaneActivated;
+
+    /// <summary>绑定视图模型。</summary>
+    public void Initialize(PaneViewModel viewModel)
+    {
+        ArgumentNullException.ThrowIfNull(viewModel);
+
+        ViewModel = viewModel;
+        DataContext = viewModel;
+        EntriesList.ItemsSource = viewModel.Rows;
+
+        _detailsView = (GridView)EntriesList.View;
+        _listTemplate = (DataTemplate)FindResource("ListTemplate");
+
+        AddHandler(GridViewColumnHeader.ClickEvent, new RoutedEventHandler(OnColumnHeaderClick));
+        EntriesList.PreviewMouseRightButtonDown += OnListRightButtonDown;
+
+        viewModel.PropertyChanged += OnViewModelPropertyChanged;
+
+        ApplyViewMode(viewModel.ViewMode);
+        AddressBox.Text = viewModel.CurrentPath;
+        UpdateNavigationState();
+    }
+
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not null && string.IsNullOrEmpty(ViewModel.AddressText))
+        {
+            AddressBox.Text = ViewModel.CurrentPath;
+        }
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        switch (e.PropertyName)
+        {
+            case nameof(PaneViewModel.AddressText):
+                // 只在地址栏未获得焦点时同步，避免打断用户输入
+                if (!AddressBox.IsKeyboardFocusWithin)
+                {
+                    AddressBox.Text = ViewModel.AddressText;
+                }
+
+                break;
+
+            case nameof(PaneViewModel.CanGoBack):
+            case nameof(PaneViewModel.CanGoForward):
+            case nameof(PaneViewModel.CurrentPath):
+                UpdateNavigationState();
+                break;
+
+            case nameof(PaneViewModel.IsFocused):
+                FocusBorder.BorderBrush = ViewModel.IsFocused ? FocusBrush : Brushes.Transparent;
+                break;
+        }
+    }
+
+    private void UpdateNavigationState()
+    {
+        BackButton.IsEnabled = ViewModel.CanGoBack;
+        ForwardButton.IsEnabled = ViewModel.CanGoForward;
+        UpButton.IsEnabled = System.IO.Directory.GetParent(ViewModel.CurrentPath) is not null;
+    }
+
+    // ---------- 焦点 ----------
+
+    /// <inheritdoc />
+    protected override void OnGotKeyboardFocus(KeyboardFocusChangedEventArgs e)
+    {
+        base.OnGotKeyboardFocus(e);
+        PaneActivated?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>让本栏的列表获得焦点。</summary>
+    public void FocusList() => EntriesList.Focus();
+
+    // ---------- 导航 ----------
+
+    private async void OnBackClick(object sender, RoutedEventArgs e) => await ViewModel.GoBackAsync();
+
+    private async void OnForwardClick(object sender, RoutedEventArgs e) => await ViewModel.GoForwardAsync();
+
+    private async void OnUpClick(object sender, RoutedEventArgs e) => await ViewModel.GoUpAsync();
+
+    private void OnAddressKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            string target = PathUtility.Expand(AddressBox.Text);
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                AddressBox.Text = ViewModel.CurrentPath;
+                return;
+            }
+
+            e.Handled = true;
+            _ = ViewModel.NavigateAsync(target);
+        }
+        else if (e.Key == Key.Escape)
+        {
+            AddressBox.Text = ViewModel.CurrentPath;
+            EntriesList.Focus();
+            e.Handled = true;
+        }
+    }
+
+    private void OnAddressGotFocus(object sender, KeyboardFocusChangedEventArgs e) => AddressBox.SelectAll();
+
+    private void OnAddressLostFocus(object sender, KeyboardFocusChangedEventArgs e) =>
+        AddressBox.Text = ViewModel.CurrentPath;
+
+    private void OnEntryDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (EntriesList.SelectedItem is EntryRow { IsDirectory: true } row)
+        {
+            _ = ViewModel.NavigateAsync(row.FullPath);
+        }
+    }
+
+    // ---------- 排序与视图 ----------
+
+    private void OnColumnHeaderClick(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is not GridViewColumnHeader { Column: { } column } header
+            || header.Role == GridViewColumnHeaderRole.Padding)
+        {
+            return;
+        }
+
+        if (ColumnSort.GetKey(column) is not string tag
+            || !Enum.TryParse(tag, ignoreCase: true, out EntrySortColumn parsed))
+        {
+            return;
+        }
+
+        bool descending = parsed == ViewModel.SortColumn && !ViewModel.SortDescending;
+        ViewModel.ApplySort(parsed, descending);
+    }
+
+    /// <summary>应用视图模式。</summary>
+    public void ApplyViewMode(ViewMode mode)
+    {
+        if (mode == ViewMode.List)
+        {
+            EntriesList.View = null;
+            EntriesList.ItemTemplate = _listTemplate;
+        }
+        else
+        {
+            EntriesList.View = _detailsView;
+            EntriesList.ItemTemplate = null;
+        }
+    }
+
+    // ---------- 文件操作 ----------
+
+    private Window? OwnerWindow => Window.GetWindow(this);
+
+    private IntPtr OwnerHandle => OwnerWindow is null
+        ? IntPtr.Zero
+        : new System.Windows.Interop.WindowInteropHelper(OwnerWindow).Handle;
+
+    private List<EntryRow> SelectedRows => EntriesList.SelectedItems.Cast<EntryRow>().ToList();
+
+    private IReadOnlyList<string> SelectedPaths => SelectedRows.Select(r => r.FullPath).ToList();
+
+    private void OnListRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var container = ItemsControl.ContainerFromElement(EntriesList, (DependencyObject)e.OriginalSource)
+            as ListViewItem;
+
+        if (container is null || container.IsSelected)
+        {
+            return;
+        }
+
+        EntriesList.SelectedItems.Clear();
+        container.IsSelected = true;
+    }
+
+    private void OnContextMenuOpened(object sender, RoutedEventArgs e)
+    {
+        bool hasSelection = EntriesList.SelectedItems.Count > 0;
+        bool hasClipboard = FileClipboard.TryGetFiles(out _, out _);
+
+        MenuOpen.IsEnabled = hasSelection;
+        MenuRename.IsEnabled = hasSelection;
+        MenuCopy.IsEnabled = hasSelection;
+        MenuCut.IsEnabled = hasSelection;
+        MenuDelete.IsEnabled = hasSelection;
+        MenuPermanentDelete.IsEnabled = hasSelection;
+        MenuCopyPath.IsEnabled = hasSelection;
+        MenuPaste.IsEnabled = hasClipboard;
+    }
+
+    /// <summary>新建文件夹（供工具栏调用）。</summary>
+    public async Task NewFolderAsync()
+    {
+        if (string.IsNullOrEmpty(ViewModel.CurrentPath))
+        {
+            return;
+        }
+
+        string suggested = UniqueNameGenerator.Generate(ViewModel.CurrentPath, "新建文件夹");
+        var dialog = new TextInputDialog("新建文件夹", "文件夹名称：", suggested, ValidateNewName)
+        {
+            Owner = OwnerWindow,
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        string parent = ViewModel.CurrentPath;
+        string name = dialog.Value;
+
+        FileOperationResult result = await Task.Run(() => _fileOperator.CreateDirectory(parent, name));
+        await HandleResultAsync(result, $"已新建文件夹：{name}");
+    }
+
+    /// <summary>重命名选中项（供工具栏调用）。</summary>
+    public async Task RenameAsync()
+    {
+        List<EntryRow> rows = SelectedRows;
+
+        if (rows.Count != 1)
+        {
+            ViewModel.SetStatus(rows.Count == 0 ? "请先选择要重命名的项目。" : "一次只能重命名一个项目。");
+            return;
+        }
+
+        EntryRow row = rows[0];
+        var dialog = new TextInputDialog("重命名", "新名称：", row.Name, ValidateNewName)
+        {
+            Owner = OwnerWindow,
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        string path = row.FullPath;
+        string newName = dialog.Value;
+
+        FileOperationResult result = await Task.Run(() => _fileOperator.Rename(path, newName));
+        await HandleResultAsync(result, $"已重命名为：{newName}");
+    }
+
+    /// <summary>删除选中项（供工具栏调用）。</summary>
+    public async Task DeleteAsync(DeleteMode mode)
+    {
+        List<EntryRow> rows = SelectedRows;
+        if (rows.Count == 0)
+        {
+            ViewModel.SetStatus("请先选择要删除的项目。");
+            return;
+        }
+
+        string message = mode == DeleteMode.Recycle
+            ? $"确定要将这 {rows.Count} 个项目移到回收站吗？"
+            : $"确定要永久删除这 {rows.Count} 个项目吗？\n\n此操作无法撤销。";
+
+        if (!Confirm(message))
+        {
+            return;
+        }
+
+        List<string> paths = rows.Select(r => r.FullPath).ToList();
+        IntPtr owner = OwnerHandle;
+
+        FileOperationResult result = await Task.Run(() => _fileOperator.Delete(paths, mode, owner));
+
+        await HandleResultAsync(
+            result,
+            mode == DeleteMode.Recycle
+                ? $"已移到回收站：{rows.Count} 项"
+                : $"已永久删除：{rows.Count} 项");
+    }
+
+    /// <summary>复制选中项到剪贴板。</summary>
+    public void CopySelection() => SetClipboard(isCut: false);
+
+    /// <summary>剪切选中项到剪贴板。</summary>
+    public void CutSelection() => SetClipboard(isCut: true);
+
+    /// <summary>粘贴。</summary>
+    public async Task PasteAsync()
+    {
+        if (string.IsNullOrEmpty(ViewModel.CurrentPath))
+        {
+            return;
+        }
+
+        if (!FileClipboard.TryGetFiles(out IReadOnlyList<string> sources, out bool isCut))
+        {
+            ViewModel.SetStatus("剪贴板中没有可粘贴的文件。");
+            return;
+        }
+
+        string destination = ViewModel.CurrentPath;
+        IntPtr owner = OwnerHandle;
+
+        FileOperationResult result = await Task.Run(() => isCut
+            ? _fileOperator.Move(sources, destination, owner)
+            : _fileOperator.Copy(sources, destination, owner));
+
+        if (result.Success && isCut)
+        {
+            // 剪切粘贴成功后清空剪贴板，避免再次粘贴变成重复移动
+            FileClipboard.Clear();
+        }
+
+        await HandleResultAsync(result, $"{(isCut ? "已移动" : "已复制")} {sources.Count} 项");
+    }
+
+    /// <summary>打开选中项。</summary>
+    public void OpenSelection()
+    {
+        List<EntryRow> rows = SelectedRows;
+        if (rows.Count == 0)
+        {
+            return;
+        }
+
+        if (rows.Count == 1 && rows[0].IsDirectory)
+        {
+            _ = ViewModel.NavigateAsync(rows[0].FullPath);
+            return;
+        }
+
+        foreach (EntryRow row in rows.Where(r => !r.IsDirectory))
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(row.FullPath) { UseShellExecute = true });
+            }
+            catch (Exception ex) when (ex is System.IO.IOException or System.ComponentModel.Win32Exception)
+            {
+                ViewModel.SetStatus($"无法打开：{ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>复制选中项的路径到剪贴板。</summary>
+    public void CopySelectionPath()
+    {
+        IReadOnlyList<string> paths = SelectedPaths;
+        if (paths.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            Clipboard.SetText(string.Join(Environment.NewLine, paths));
+            ViewModel.SetStatus($"已复制 {paths.Count} 条路径");
+        }
+        catch (Exception ex) when (ex is COMException or ExternalException)
+        {
+            ViewModel.SetStatus("无法访问剪贴板，请稍后重试。");
+        }
+    }
+
+    private void OnNewFolderClick(object sender, RoutedEventArgs e) => _ = NewFolderAsync();
+
+    private void OnRenameClick(object sender, RoutedEventArgs e) => _ = RenameAsync();
+
+    private void OnDeleteClick(object sender, RoutedEventArgs e) => _ = DeleteAsync(DeleteMode.Recycle);
+
+    private void OnPermanentDeleteClick(object sender, RoutedEventArgs e) => _ = DeleteAsync(DeleteMode.Permanent);
+
+    private void OnCopyClick(object sender, RoutedEventArgs e) => CopySelection();
+
+    private void OnCutClick(object sender, RoutedEventArgs e) => CutSelection();
+
+    private void OnPasteClick(object sender, RoutedEventArgs e) => _ = PasteAsync();
+
+    private void OnOpenClick(object sender, RoutedEventArgs e) => OpenSelection();
+
+    private void OnCopyPathClick(object sender, RoutedEventArgs e) => CopySelectionPath();
+
+    private void SetClipboard(bool isCut)
+    {
+        IReadOnlyList<string> paths = SelectedPaths;
+        if (paths.Count == 0)
+        {
+            ViewModel.SetStatus("请先选择项目。");
+            return;
+        }
+
+        ViewModel.SetStatus(FileClipboard.SetFiles(paths, isCut)
+            ? $"{(isCut ? "已剪切" : "已复制")} {paths.Count} 项"
+            : "无法访问剪贴板，可能被其他程序占用，请稍后重试。");
+    }
+
+    private async Task HandleResultAsync(FileOperationResult result, string successMessage)
+    {
+        if (result.Success)
+        {
+            ViewModel.SetStatus(successMessage);
+            await ViewModel.RefreshAsync();
+            return;
+        }
+
+        ViewModel.SetStatus($"操作失败：{result.ErrorMessage}");
+        MessageBox.Show(
+            OwnerWindow!,
+            result.ErrorMessage ?? "未知错误",
+            "操作失败",
+            MessageBoxButton.OK,
+            MessageBoxImage.Error);
+    }
+
+    private bool Confirm(string message) =>
+        MessageBox.Show(OwnerWindow!, message, "Files", MessageBoxButton.YesNo, MessageBoxImage.Warning)
+        == MessageBoxResult.Yes;
+
+    private string? ValidateNewName(string name)
+    {
+        if (!PathUtility.IsValidFileName(name))
+        {
+            return "名称无效：不能包含 \\ / : * ? \" < > |，不能以点结尾，也不能是 CON、NUL 等保留名。";
+        }
+
+        return UniqueNameGenerator.Exists(ViewModel.CurrentPath, name) ? "该名称已存在。" : null;
+    }
+
+    // ---------- 键盘 ----------
+
+    private void OnListPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        ModifierKeys modifiers = Keyboard.Modifiers;
+
+        if (e.Key == Key.A && modifiers == ModifierKeys.Control)
+        {
+            EntriesList.SelectAll();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.I && modifiers == ModifierKeys.Control)
+        {
+            InvertSelection();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.N && modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
+        {
+            _ = NewFolderAsync();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.F2)
+        {
+            _ = RenameAsync();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Delete)
+        {
+            _ = DeleteAsync(modifiers == ModifierKeys.Shift ? DeleteMode.Permanent : DeleteMode.Recycle);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.C && modifiers == ModifierKeys.Control)
+        {
+            CopySelection();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.X && modifiers == ModifierKeys.Control)
+        {
+            CutSelection();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.V && modifiers == ModifierKeys.Control)
+        {
+            _ = PasteAsync();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.F5)
+        {
+            _ = ViewModel.RefreshAsync();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Back)
+        {
+            _ = ViewModel.GoBackAsync();
+            e.Handled = true;
+        }
+    }
+
+    private void InvertSelection()
+    {
+        var selected = EntriesList.SelectedItems.Cast<EntryRow>().ToHashSet();
+
+        foreach (EntryRow row in ViewModel.Rows)
+        {
+            if (selected.Contains(row))
+            {
+                EntriesList.SelectedItems.Remove(row);
+            }
+            else
+            {
+                EntriesList.SelectedItems.Add(row);
+            }
+        }
+    }
+
+    private static Brush CreateFrozen(Color color)
+    {
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
+    }
+}

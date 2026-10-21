@@ -1,15 +1,11 @@
-using System.Collections.ObjectModel;
-using System.Diagnostics;
-using System.Globalization;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Media;
 using System.Windows.Threading;
-using System.Windows.Interop;
 using Files.App.Diagnostics;
+using Files.App.ViewModels;
+using Files.App.Views;
 using Files.Core.Diagnostics;
 using Files.Core.Models;
 using Files.Core.Services;
@@ -18,27 +14,27 @@ using Files.Interop;
 namespace Files.App;
 
 /// <summary>
-/// 文件管理器主窗口：地址栏导航、后退/前进、可排序列、两种视图模式。
+/// 主窗口：渲染布局树、管理焦点栏、转发全局命令。
 /// </summary>
+/// <remarks>
+/// 多栏的关键设计：布局树是唯一事实来源（<see cref="LayoutNode"/>），
+/// 每个叶子绑定一个 <see cref="PaneViewModel"/>。切换布局时通过
+/// <see cref="LayoutFactory.Create"/> 复用焦点栏的状态，其余栏从它克隆，
+/// 因此用户当前正在看的目录不会因为切换布局而丢失。
+/// </remarks>
 public partial class MainWindow : Window
 {
     private readonly IDirectoryLister _lister = new Win32DirectoryLister();
-    private readonly IFileOperator _fileOperator = new ShellFileOperator();
-    private readonly LatestTaskRunner _runner = new();
-    private readonly NavigationHistory _history = new();
-    private readonly SettingsService _settings;
-    private readonly ObservableCollection<EntryRow> _rows = [];
+    private readonly Dictionary<PaneState, PaneViewModel> _viewModels = [];
     private readonly FrameTimer _frameTimer = new();
     private readonly WorkingSetSampler _memory = new();
     private readonly DispatcherTimer _hudTimer;
+    private readonly SettingsService _settings;
     private readonly bool _perfHudEnabled;
-    private readonly GridView _detailsView;
-    private readonly DataTemplate _listTemplate;
 
-    private DirectoryListing? _currentListing;
-    private string _currentPath = string.Empty;
-    private EntrySortColumn _sortColumn = EntrySortColumn.Name;
-    private bool _sortDescending;
+    private LayoutNode _layout = null!;
+    private List<PaneView> _paneViews = [];
+    private int _focusedIndex;
 
     public MainWindow()
     {
@@ -47,22 +43,11 @@ public partial class MainWindow : Window
         _perfHudEnabled = Environment.GetCommandLineArgs()
             .Any(arg => string.Equals(arg, "--perf", StringComparison.OrdinalIgnoreCase));
 
-        _detailsView = (GridView)EntriesList.View;
-        _listTemplate = (DataTemplate)FindResource("ListTemplate");
-
         _settings = new SettingsService(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "Files",
             "settings.json"));
         _settings.Load();
-
-        RestoreSettings();
-
-        EntriesList.ItemsSource = _rows;
-        AddHandler(GridViewColumnHeader.ClickEvent, new RoutedEventHandler(OnColumnHeaderClick));
-
-        // 右键时手动选中鼠标下的条目：WPF 不会自动做，否则菜单会作用到上一次的选择
-        EntriesList.PreviewMouseRightButtonDown += OnListRightButtonDown;
 
         _hudTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -72,9 +57,9 @@ public partial class MainWindow : Window
 
         Loaded += OnLoaded;
         Closed += OnClosed;
+        PreviewKeyDown += OnWindowPreviewKeyDown;
 
-        string startPath = ResolveStartPath();
-        _ = NavigateAsync(startPath, recordHistory: true);
+        RestoreLayout();
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -89,7 +74,12 @@ public partial class MainWindow : Window
                 _hudTimer.Start();
             }
 
-            Debug.WriteLine($"[perf] startup: {StartupProbe.Report()}");
+            if (_paneViews.Count > 0)
+            {
+                _paneViews[Math.Clamp(_focusedIndex, 0, _paneViews.Count - 1)].FocusList();
+            }
+
+            System.Diagnostics.Debug.WriteLine($"[perf] startup: {StartupProbe.Report()}");
         });
     }
 
@@ -97,564 +87,392 @@ public partial class MainWindow : Window
     {
         _hudTimer.Stop();
         _frameTimer.Stop();
-        _runner.Dispose();
 
         CaptureSettings();
+
         try
         {
             _settings.Save();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            Debug.WriteLine($"[settings] 保存失败：{ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"[settings] 保存失败：{ex.Message}");
+        }
+
+        foreach (PaneViewModel viewModel in _viewModels.Values)
+        {
+            viewModel.Dispose();
         }
     }
 
-    // ---------- 导航 ----------
+    // ---------- 布局 ----------
 
-    private string ResolveStartPath()
+    private void RestoreLayout()
     {
-        if (!string.IsNullOrWhiteSpace(_settings.Current.LastPath)
-            && Directory.Exists(_settings.Current.LastPath))
+        AppSettings settings = _settings.Current;
+
+        if (!Enum.TryParse(settings.LayoutMode, ignoreCase: true, out PaneLayout mode))
         {
-            return _settings.Current.LastPath;
+            mode = PaneLayout.Single;
         }
 
-        return Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        _layout = LayoutFactory.Create(null, PaneLayout.Single);
+
+        if (mode != PaneLayout.Single)
+        {
+            _layout = LayoutFactory.Create(_layout, mode);
+        }
+
+        ApplySavedPanePaths(settings);
+        ApplySavedRatios(settings);
+
+        RenderLayout();
+        SelectLayoutButton(mode);
+
+        _ = NavigateAllPanesAsync();
     }
 
-    private async Task NavigateAsync(string path, bool recordHistory)
+    private void ApplySavedPanePaths(AppSettings settings)
     {
-        StatusText.Text = "正在读取…";
-
-        try
+        if (settings.Panes.Count == 0)
         {
-            EntrySortColumn column = _sortColumn;
-            bool descending = _sortDescending;
+            return;
+        }
 
-            // 列举与排序都在后台线程完成；若期间又发起了新的导航，本次会被取消
-            DirectoryListing? listing = await _runner.RunAsync(_ =>
+        IReadOnlyList<PaneState> panes = LayoutFactory.CollectPanes(_layout);
+        for (int i = 0; i < panes.Count && i < settings.Panes.Count; i++)
+        {
+            string path = settings.Panes[i].Path;
+            if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
             {
-                DirectoryListing raw = _lister.List(path);
-                return EntrySorter.Sort(raw, column, descending);
-            });
-
-            if (listing is null)
-            {
-                // 被更新的一次导航取代，静默丢弃
-                return;
+                panes[i].ActiveTab.Path = path;
             }
 
-            _currentListing = listing;
-            _currentPath = listing.DirectoryPath;
-
-            if (recordHistory)
+            if (Enum.TryParse(settings.Panes[i].ViewMode, ignoreCase: true, out ViewMode viewMode))
             {
-                _history.Navigate(_currentPath);
+                panes[i].ActiveTab.ViewMode = viewMode;
             }
-
-            RebuildRows(listing);
-            AddressBox.Text = _currentPath;
-            UpdateNavigationState();
-        }
-        catch (Exception ex) when (ex is DirectoryNotFoundException
-                                       or UnauthorizedAccessException
-                                       or IOException
-                                       or ArgumentException)
-        {
-            StatusText.Text = $"无法打开：{ex.Message}";
         }
     }
 
-    private void RebuildRows(DirectoryListing listing)
+    private void ApplySavedRatios(AppSettings settings)
     {
-        long start = Stopwatch.GetTimestamp();
-
-        _rows.Clear();
-        for (int i = 0; i < listing.Count; i++)
-        {
-            _rows.Add(EntryRow.From(listing, i));
-        }
-
-        double elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-        StatusText.Text = $"{listing.Count:N0} 个项目 · 读取 {elapsedMs:F1}ms · {Path.GetFileName(listing.DirectoryPath) switch { "" => listing.DirectoryPath, var n => n }}";
-    }
-
-    private void UpdateNavigationState()
-    {
-        BackButton.IsEnabled = _history.CanGoBack;
-        ForwardButton.IsEnabled = _history.CanGoForward;
-        UpButton.IsEnabled = Directory.GetParent(_currentPath) is not null;
-    }
-
-    private void OnBackClick(object sender, RoutedEventArgs e)
-    {
-        string? target = _history.Back();
-        if (target is not null)
-        {
-            _ = NavigateAsync(target, recordHistory: false);
-        }
-    }
-
-    private void OnForwardClick(object sender, RoutedEventArgs e)
-    {
-        string? target = _history.Forward();
-        if (target is not null)
-        {
-            _ = NavigateAsync(target, recordHistory: false);
-        }
-    }
-
-    private void OnGoUpClick(object sender, RoutedEventArgs e)
-    {
-        var parent = Directory.GetParent(_currentPath);
-        if (parent is not null)
-        {
-            _ = NavigateAsync(parent.FullName, recordHistory: true);
-        }
-    }
-
-    private void OnRefreshClick(object sender, RoutedEventArgs e)
-    {
-        if (!string.IsNullOrEmpty(_currentPath))
-        {
-            _ = NavigateAsync(_currentPath, recordHistory: false);
-        }
-    }
-
-    private void OnEntryDoubleClick(object sender, MouseButtonEventArgs e)
-    {
-        if (EntriesList.SelectedItem is not EntryRow { IsDirectory: true } row)
+        if (settings.SplitRatios.Count == 0)
         {
             return;
         }
 
-        _ = NavigateAsync(row.FullPath, recordHistory: true);
+        IReadOnlyList<SplitNode> splits = LayoutFactory.CollectSplits(_layout);
+        for (int i = 0; i < splits.Count && i < settings.SplitRatios.Count; i++)
+        {
+            double ratio = settings.SplitRatios[i];
+            if (ratio is > 0.05 and < 0.95)
+            {
+                splits[i].FirstRatio = ratio;
+            }
+        }
     }
 
-    // ---------- 文件操作 ----------
-
-    private IntPtr OwnerHandle => new WindowInteropHelper(this).Handle;
-
-    private List<EntryRow> SelectedRows => EntriesList.SelectedItems.Cast<EntryRow>().ToList();
-
-    private IReadOnlyList<string> SelectedPaths => SelectedRows.Select(r => r.FullPath).ToList();
-
-    private void OnListRightButtonDown(object sender, MouseButtonEventArgs e)
+    private async Task NavigateAllPanesAsync()
     {
-        var container = ItemsControl.ContainerFromElement(EntriesList, (DependencyObject)e.OriginalSource)
-            as ListViewItem;
+        IReadOnlyList<PaneState> panes = LayoutFactory.CollectPanes(_layout);
 
-        if (container is null || container.IsSelected)
+        var tasks = new List<Task>(panes.Count);
+        foreach (PaneState pane in panes)
         {
-            return;
+            PaneViewModel viewModel = GetViewModel(pane);
+            tasks.Add(viewModel.NavigateAsync(viewModel.CurrentPath));
         }
 
-        EntriesList.SelectedItems.Clear();
-        container.IsSelected = true;
+        await Task.WhenAll(tasks);
+        UpdatePaneIndicator();
     }
 
-    private void OnContextMenuOpened(object sender, RoutedEventArgs e)
+    private PaneViewModel GetViewModel(PaneState pane)
     {
-        bool hasSelection = EntriesList.SelectedItems.Count > 0;
-        bool hasClipboard = FileClipboard.TryGetFiles(out _, out _);
-
-        MenuOpen.IsEnabled = hasSelection;
-        MenuRename.IsEnabled = hasSelection;
-        MenuCopy.IsEnabled = hasSelection;
-        MenuCut.IsEnabled = hasSelection;
-        MenuDelete.IsEnabled = hasSelection;
-        MenuPermanentDelete.IsEnabled = hasSelection;
-        MenuCopyPath.IsEnabled = hasSelection;
-        MenuPaste.IsEnabled = hasClipboard;
-    }
-
-    private async void OnNewFolderClick(object sender, RoutedEventArgs e)
-    {
-        if (string.IsNullOrEmpty(_currentPath))
+        if (_viewModels.TryGetValue(pane, out PaneViewModel? existing))
         {
-            return;
+            return existing;
         }
 
-        string suggested = UniqueNameGenerator.Generate(_currentPath, "新建文件夹");
-        var dialog = new TextInputDialog("新建文件夹", "文件夹名称：", suggested, ValidateNewName)
+        var viewModel = new PaneViewModel(pane, _lister);
+        viewModel.StatusChanged += (_, _) =>
         {
-            Owner = this,
+            if (_focusedIndex >= 0 && _focusedIndex < _paneViews.Count
+                && ReferenceEquals(_paneViews[_focusedIndex].ViewModel, viewModel))
+            {
+                StatusText.Text = viewModel.StatusText;
+            }
         };
 
-        if (dialog.ShowDialog() != true)
-        {
-            return;
-        }
-
-        string parent = _currentPath;
-        string name = dialog.Value;
-
-        FileOperationResult result = await Task.Run(() => _fileOperator.CreateDirectory(parent, name));
-        await HandleResultAsync(result, $"已新建文件夹：{name}");
+        _viewModels[pane] = viewModel;
+        return viewModel;
     }
 
-    private async void OnRenameClick(object sender, RoutedEventArgs e)
+    /// <summary>重新渲染布局树。</summary>
+    private void RenderLayout()
     {
-        List<EntryRow> rows = SelectedRows;
+        LayoutHost.Children.Clear();
+        _paneViews = [];
 
-        if (rows.Count != 1)
+        FrameworkElement root = BuildVisual(_layout);
+        LayoutHost.Children.Add(root);
+
+        // 布局变化后，不在树中的栏视图模型可以释放
+        IReadOnlyList<PaneState> live = LayoutFactory.CollectPanes(_layout);
+        foreach (PaneState pane in _viewModels.Keys.Except(live).ToList())
         {
-            StatusText.Text = rows.Count == 0 ? "请先选择要重命名的项目。" : "一次只能重命名一个项目。";
-            return;
+            _viewModels[pane].Dispose();
+            _viewModels.Remove(pane);
         }
 
-        EntryRow row = rows[0];
-        var dialog = new TextInputDialog("重命名", "新名称：", row.Name, ValidateNewName)
-        {
-            Owner = this,
-        };
-
-        if (dialog.ShowDialog() != true)
-        {
-            return;
-        }
-
-        string path = row.FullPath;
-        string newName = dialog.Value;
-
-        FileOperationResult result = await Task.Run(() => _fileOperator.Rename(path, newName));
-        await HandleResultAsync(result, $"已重命名为：{newName}");
+        SetFocusedIndex(Math.Clamp(_focusedIndex, 0, Math.Max(0, _paneViews.Count - 1)));
     }
 
-    private async void OnDeleteClick(object sender, RoutedEventArgs e) =>
-        await DeleteSelectedAsync(DeleteMode.Recycle);
-
-    private async void OnPermanentDeleteClick(object sender, RoutedEventArgs e) =>
-        await DeleteSelectedAsync(DeleteMode.Permanent);
-
-    private async Task DeleteSelectedAsync(DeleteMode mode)
+    private FrameworkElement BuildVisual(LayoutNode node)
     {
-        List<EntryRow> rows = SelectedRows;
-        if (rows.Count == 0)
+        if (node is PaneNode paneNode)
         {
-            StatusText.Text = "请先选择要删除的项目。";
-            return;
-        }
-
-        string message = mode == DeleteMode.Recycle
-            ? $"确定要将这 {rows.Count} 个项目移到回收站吗？"
-            : $"确定要永久删除这 {rows.Count} 个项目吗？\n\n此操作无法撤销。";
-
-        if (!Confirm(message))
-        {
-            return;
-        }
-
-        List<string> paths = rows.Select(r => r.FullPath).ToList();
-        IntPtr owner = OwnerHandle;
-
-        FileOperationResult result = await Task.Run(() => _fileOperator.Delete(paths, mode, owner));
-
-        await HandleResultAsync(
-            result,
-            mode == DeleteMode.Recycle
-                ? $"已移到回收站：{rows.Count} 项"
-                : $"已永久删除：{rows.Count} 项");
-    }
-
-    private void OnCopyClick(object sender, RoutedEventArgs e) => SetClipboard(isCut: false);
-
-    private void OnCutClick(object sender, RoutedEventArgs e) => SetClipboard(isCut: true);
-
-    private void SetClipboard(bool isCut)
-    {
-        IReadOnlyList<string> paths = SelectedPaths;
-        if (paths.Count == 0)
-        {
-            StatusText.Text = "请先选择项目。";
-            return;
-        }
-
-        StatusText.Text = FileClipboard.SetFiles(paths, isCut)
-            ? $"{(isCut ? "已剪切" : "已复制")} {paths.Count} 项"
-            : "无法访问剪贴板，可能被其他程序占用，请稍后重试。";
-    }
-
-    private async void OnPasteClick(object sender, RoutedEventArgs e)
-    {
-        if (string.IsNullOrEmpty(_currentPath))
-        {
-            return;
-        }
-
-        if (!FileClipboard.TryGetFiles(out IReadOnlyList<string> sources, out bool isCut))
-        {
-            StatusText.Text = "剪贴板中没有可粘贴的文件。";
-            return;
-        }
-
-        string destination = _currentPath;
-        IntPtr owner = OwnerHandle;
-
-        FileOperationResult result = await Task.Run(() => isCut
-            ? _fileOperator.Move(sources, destination, owner)
-            : _fileOperator.Copy(sources, destination, owner));
-
-        if (result.Success && isCut)
-        {
-            // 剪切粘贴成功后清空剪贴板，避免再次粘贴变成重复移动
-            FileClipboard.Clear();
-        }
-
-        await HandleResultAsync(
-            result,
-            $"{(isCut ? "已移动" : "已复制")} {sources.Count} 项");
-    }
-
-    private void OnOpenClick(object sender, RoutedEventArgs e)
-    {
-        List<EntryRow> rows = SelectedRows;
-        if (rows.Count == 0)
-        {
-            return;
-        }
-
-        if (rows.Count == 1 && rows[0].IsDirectory)
-        {
-            _ = NavigateAsync(rows[0].FullPath, recordHistory: true);
-            return;
-        }
-
-        foreach (EntryRow row in rows.Where(r => !r.IsDirectory))
-        {
-            try
+            var view = new PaneView();
+            view.Initialize(GetViewModel(paneNode.Pane));
+            view.PaneActivated += (_, _) =>
             {
-                Process.Start(new ProcessStartInfo(row.FullPath) { UseShellExecute = true });
-            }
-            catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception)
+                int index = _paneViews.IndexOf(view);
+                if (index >= 0)
+                {
+                    SetFocusedIndex(index);
+                }
+            };
+
+            _paneViews.Add(view);
+            return view;
+        }
+
+        var split = (SplitNode)node;
+        var grid = new Grid();
+
+        if (split.Direction == SplitDirection.Horizontal)
+        {
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(split.FirstRatio, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1 - split.FirstRatio, GridUnitType.Star) });
+
+            FrameworkElement first = BuildVisual(split.First);
+            Grid.SetColumn(first, 0);
+            grid.Children.Add(first);
+
+            var splitter = CreateSplitter(isHorizontal: true);
+            Grid.SetColumn(splitter, 1);
+            grid.Children.Add(splitter);
+
+            FrameworkElement second = BuildVisual(split.Second);
+            Grid.SetColumn(second, 2);
+            grid.Children.Add(second);
+
+            splitter.DragCompleted += (_, _) =>
             {
-                StatusText.Text = $"无法打开：{ex.Message}";
-            }
-        }
-    }
-
-    private void OnCopyPathClick(object sender, RoutedEventArgs e)
-    {
-        IReadOnlyList<string> paths = SelectedPaths;
-        if (paths.Count == 0)
-        {
-            return;
-        }
-
-        try
-        {
-            Clipboard.SetText(string.Join(Environment.NewLine, paths));
-            StatusText.Text = $"已复制 {paths.Count} 条路径";
-        }
-        catch (Exception ex) when (ex is COMException or ExternalException)
-        {
-            StatusText.Text = "无法访问剪贴板，请稍后重试。";
-        }
-    }
-
-    private async Task HandleResultAsync(FileOperationResult result, string successMessage)
-    {
-        if (result.Success)
-        {
-            StatusText.Text = successMessage;
-            await NavigateAsync(_currentPath, recordHistory: false);
-            return;
-        }
-
-        StatusText.Text = $"操作失败：{result.ErrorMessage}";
-        MessageBox.Show(
-            this,
-            result.ErrorMessage ?? "未知错误",
-            "操作失败",
-            MessageBoxButton.OK,
-            MessageBoxImage.Error);
-    }
-
-    private bool Confirm(string message) =>
-        MessageBox.Show(this, message, "Files", MessageBoxButton.YesNo, MessageBoxImage.Warning)
-        == MessageBoxResult.Yes;
-
-    private string? ValidateNewName(string name)
-    {
-        if (!PathUtility.IsValidFileName(name))
-        {
-            return "名称无效：不能包含 \\ / : * ? \" < > |，不能以空格或点结尾，也不能是 CON、NUL 等保留名。";
-        }
-
-        return UniqueNameGenerator.Exists(_currentPath, name) ? "该名称已存在。" : null;
-    }
-
-    // ---------- 地址栏 ----------
-
-    private void OnAddressKeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Enter)
-        {
-            string target = PathUtility.Expand(AddressBox.Text);
-
-            if (string.IsNullOrWhiteSpace(target))
-            {
-                AddressBox.Text = _currentPath;
-                return;
-            }
-
-            e.Handled = true;
-            _ = NavigateAsync(target, recordHistory: true);
-        }
-        else if (e.Key == Key.Escape)
-        {
-            AddressBox.Text = _currentPath;
-            EntriesList.Focus();
-            e.Handled = true;
-        }
-    }
-
-    private void OnAddressGotFocus(object sender, KeyboardFocusChangedEventArgs e) => AddressBox.SelectAll();
-
-    private void OnAddressLostFocus(object sender, KeyboardFocusChangedEventArgs e) =>
-        AddressBox.Text = _currentPath;
-
-    // ---------- 排序 ----------
-
-    private void OnColumnHeaderClick(object sender, RoutedEventArgs e)
-    {
-        if (e.OriginalSource is not GridViewColumnHeader { Column: { } column } header
-            || header.Role == GridViewColumnHeaderRole.Padding)
-        {
-            return;
-        }
-
-        if (ColumnSort.GetKey(column) is not string tag
-            || !Enum.TryParse(tag, ignoreCase: true, out EntrySortColumn parsed))
-        {
-            return;
-        }
-
-        if (parsed == _sortColumn)
-        {
-            _sortDescending = !_sortDescending;
+                double total = grid.ColumnDefinitions[0].ActualWidth + grid.ColumnDefinitions[2].ActualWidth;
+                if (total > 0)
+                {
+                    split.FirstRatio = grid.ColumnDefinitions[0].ActualWidth / total;
+                }
+            };
         }
         else
         {
-            _sortColumn = parsed;
-            _sortDescending = false;
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(split.FirstRatio, GridUnitType.Star) });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1 - split.FirstRatio, GridUnitType.Star) });
+
+            FrameworkElement first = BuildVisual(split.First);
+            Grid.SetRow(first, 0);
+            grid.Children.Add(first);
+
+            var splitter = CreateSplitter(isHorizontal: false);
+            Grid.SetRow(splitter, 1);
+            grid.Children.Add(splitter);
+
+            FrameworkElement second = BuildVisual(split.Second);
+            Grid.SetRow(second, 2);
+            grid.Children.Add(second);
+
+            splitter.DragCompleted += (_, _) =>
+            {
+                double total = grid.RowDefinitions[0].ActualHeight + grid.RowDefinitions[2].ActualHeight;
+                if (total > 0)
+                {
+                    split.FirstRatio = grid.RowDefinitions[0].ActualHeight / total;
+                }
+            };
         }
 
-        ResolveSort(parsed, _sortDescending);
+        return grid;
     }
 
-    private void ResolveSort(EntrySortColumn column, bool descending)
+    private static GridSplitter CreateSplitter(bool isHorizontal)
     {
-        if (_currentListing is null)
+        return isHorizontal
+            ? new GridSplitter
+            {
+                Width = 4,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                ResizeBehavior = GridResizeBehavior.PreviousAndNext,
+                ResizeDirection = GridResizeDirection.Columns,
+                Background = System.Windows.Media.Brushes.LightGray,
+            }
+            : new GridSplitter
+            {
+                Height = 4,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Center,
+                ResizeBehavior = GridResizeBehavior.PreviousAndNext,
+                ResizeDirection = GridResizeDirection.Rows,
+                Background = System.Windows.Media.Brushes.LightGray,
+            };
+    }
+
+    private void SetFocusedIndex(int index)
+    {
+        if (_paneViews.Count == 0)
+        {
+            _focusedIndex = 0;
+            return;
+        }
+
+        _focusedIndex = Math.Clamp(index, 0, _paneViews.Count - 1);
+
+        for (int i = 0; i < _paneViews.Count; i++)
+        {
+            _paneViews[i].ViewModel.IsFocused = i == _focusedIndex;
+        }
+
+        StatusText.Text = _paneViews[_focusedIndex].ViewModel.StatusText;
+        SyncViewModeBox();
+        UpdatePaneIndicator();
+    }
+
+    private void UpdatePaneIndicator() =>
+        PaneIndicatorText.Text = $"栏 {_focusedIndex + 1}/{Math.Max(1, _paneViews.Count)}";
+
+    private void SyncViewModeBox()
+    {
+        if (_focusedIndex < 0 || _focusedIndex >= _paneViews.Count)
         {
             return;
         }
 
-        _currentListing = EntrySorter.Sort(_currentListing, column, descending);
-        RebuildRows(_currentListing);
+        ViewMode mode = _paneViews[_focusedIndex].ViewModel.ViewMode;
+        string tag = mode == ViewMode.List ? "List" : "Details";
+
+        foreach (ComboBoxItem item in ViewModeBox.Items)
+        {
+            if (string.Equals(item.Tag as string, tag, StringComparison.OrdinalIgnoreCase))
+            {
+                ViewModeBox.SelectedItem = item;
+                break;
+            }
+        }
     }
 
-    // ---------- 视图模式 ----------
+    // ---------- 布局切换 ----------
 
-    private void OnViewModeChanged(object sender, SelectionChangedEventArgs e)
+    private void OnLayoutSingleClick(object sender, RoutedEventArgs e) => SwitchLayout(PaneLayout.Single);
+
+    private void OnLayoutHorizontalClick(object sender, RoutedEventArgs e) => SwitchLayout(PaneLayout.HorizontalSplit);
+
+    private void OnLayoutVerticalClick(object sender, RoutedEventArgs e) => SwitchLayout(PaneLayout.VerticalSplit);
+
+    private void OnLayoutQuadClick(object sender, RoutedEventArgs e) => SwitchLayout(PaneLayout.Quad);
+
+    private void SwitchLayout(PaneLayout target)
     {
-        if (ViewModeBox.SelectedItem is not ComboBoxItem { Tag: string mode })
+        if (_paneViews.Count > 0)
         {
-            return;
+            _paneViews[_focusedIndex].ViewModel.PersistState();
         }
 
-        ApplyViewMode(mode);
+        _layout = LayoutFactory.Create(_layout, target, _focusedIndex);
+        _focusedIndex = 0;
+
+        RenderLayout();
+        SelectLayoutButton(target);
+
+        _ = NavigateAllPanesAsync();
     }
 
-    private void ApplyViewMode(string mode)
+    private void SelectLayoutButton(PaneLayout mode)
     {
-        if (string.Equals(mode, "List", StringComparison.OrdinalIgnoreCase))
-        {
-            EntriesList.View = null;
-            EntriesList.ItemTemplate = _listTemplate;
-        }
-        else
-        {
-            EntriesList.View = _detailsView;
-            EntriesList.ItemTemplate = null;
-        }
+        LayoutSingleButton.IsEnabled = mode != PaneLayout.Single;
+        LayoutHorizontalButton.IsEnabled = mode != PaneLayout.HorizontalSplit;
+        LayoutVerticalButton.IsEnabled = mode != PaneLayout.VerticalSplit;
+        LayoutQuadButton.IsEnabled = mode != PaneLayout.Quad;
     }
 
-    // ---------- 键盘 ----------
-
-    private void OnListPreviewKeyDown(object sender, KeyEventArgs e)
+    private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
     {
         ModifierKeys modifiers = Keyboard.Modifiers;
 
-        if (e.Key == Key.A && modifiers == ModifierKeys.Control)
+        if (modifiers == ModifierKeys.Control)
         {
-            EntriesList.SelectAll();
-            e.Handled = true;
+            PaneLayout? target = e.Key switch
+            {
+                Key.D1 or Key.NumPad1 => PaneLayout.Single,
+                Key.D2 or Key.NumPad2 => PaneLayout.HorizontalSplit,
+                Key.D3 or Key.NumPad3 => PaneLayout.VerticalSplit,
+                Key.D4 or Key.NumPad4 => PaneLayout.Quad,
+                _ => null,
+            };
+
+            if (target is not null)
+            {
+                SwitchLayout(target.Value);
+                e.Handled = true;
+                return;
+            }
         }
-        else if (e.Key == Key.I && modifiers == ModifierKeys.Control)
+
+        if (e.Key == Key.F6 && _paneViews.Count > 1)
         {
-            InvertSelection();
-            e.Handled = true;
-        }
-        else if (e.Key == Key.N && modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
-        {
-            OnNewFolderClick(sender, e);
-            e.Handled = true;
-        }
-        else if (e.Key == Key.F2)
-        {
-            OnRenameClick(sender, e);
-            e.Handled = true;
-        }
-        else if (e.Key == Key.Delete)
-        {
-            _ = DeleteSelectedAsync(
-                modifiers == ModifierKeys.Shift ? DeleteMode.Permanent : DeleteMode.Recycle);
-            e.Handled = true;
-        }
-        else if (e.Key == Key.C && modifiers == ModifierKeys.Control)
-        {
-            SetClipboard(isCut: false);
-            e.Handled = true;
-        }
-        else if (e.Key == Key.X && modifiers == ModifierKeys.Control)
-        {
-            SetClipboard(isCut: true);
-            e.Handled = true;
-        }
-        else if (e.Key == Key.V && modifiers == ModifierKeys.Control)
-        {
-            OnPasteClick(sender, e);
-            e.Handled = true;
-        }
-        else if (e.Key == Key.F5)
-        {
-            OnRefreshClick(sender, e);
-            e.Handled = true;
-        }
-        else if (e.Key == Key.Back)
-        {
-            OnBackClick(sender, e);
+            int delta = modifiers == ModifierKeys.Shift ? -1 : 1;
+            int next = (_focusedIndex + delta + _paneViews.Count) % _paneViews.Count;
+
+            SetFocusedIndex(next);
+            _paneViews[next].FocusList();
             e.Handled = true;
         }
     }
 
-    private void InvertSelection()
-    {
-        var selected = EntriesList.SelectedItems.Cast<EntryRow>().ToHashSet();
+    // ---------- 全局命令（作用于焦点栏） ----------
 
-        foreach (EntryRow row in _rows)
+    private PaneView? FocusedPane =>
+        _focusedIndex >= 0 && _focusedIndex < _paneViews.Count ? _paneViews[_focusedIndex] : null;
+
+    private void OnNewFolderClick(object sender, RoutedEventArgs e) => _ = FocusedPane?.NewFolderAsync();
+
+    private void OnRenameClick(object sender, RoutedEventArgs e) => _ = FocusedPane?.RenameAsync();
+
+    private void OnDeleteClick(object sender, RoutedEventArgs e) => _ = FocusedPane?.DeleteAsync(DeleteMode.Recycle);
+
+    private void OnViewModeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ViewModeBox.SelectedItem is not ComboBoxItem { Tag: string tag })
         {
-            if (selected.Contains(row))
-            {
-                EntriesList.SelectedItems.Remove(row);
-            }
-            else
-            {
-                EntriesList.SelectedItems.Add(row);
-            }
+            return;
         }
+
+        ViewMode mode = string.Equals(tag, "List", StringComparison.OrdinalIgnoreCase)
+            ? ViewMode.List
+            : ViewMode.Details;
+
+        PaneView? pane = FocusedPane;
+        if (pane is null)
+        {
+            return;
+        }
+
+        pane.ViewModel.ApplyViewMode(mode);
+        pane.ApplyViewMode(mode);
     }
 
     // ---------- 性能 HUD ----------
@@ -662,78 +480,11 @@ public partial class MainWindow : Window
     private void OnHudTick(object? sender, EventArgs e)
     {
         PerfText.Text = string.Create(
-            CultureInfo.InvariantCulture,
-            $"FPS {_frameTimer.CurrentFps:F0} | 最差帧 {_frameTimer.WorstFrameMs:F0}ms | 内存 {_memory.Sample():F0}MB | 项 {_rows.Count:N0}");
+            System.Globalization.CultureInfo.InvariantCulture,
+            $"FPS {_frameTimer.CurrentFps:F0} | 最差帧 {_frameTimer.WorstFrameMs:F0}ms | 内存 {_memory.Sample():F0}MB | 栏 {_paneViews.Count}");
     }
 
     // ---------- 设置 ----------
-
-    private void RestoreSettings()
-    {
-        AppSettings settings = _settings.Current;
-
-        if (!double.IsNaN(settings.Window.Width) && settings.Window.Width > 200)
-        {
-            Width = settings.Window.Width;
-        }
-
-        if (!double.IsNaN(settings.Window.Height) && settings.Window.Height > 200)
-        {
-            Height = settings.Window.Height;
-        }
-
-        if (settings.Window.Left is double savedLeft && settings.Window.Top is double savedTop)
-        {
-            // 只有当保存的位置仍在可见范围内才恢复，避免多显示器拔掉后窗口跑到屏幕外
-            double virtualLeft = SystemParameters.VirtualScreenLeft;
-            double virtualTop = SystemParameters.VirtualScreenTop;
-            double virtualRight = virtualLeft + SystemParameters.VirtualScreenWidth;
-            double virtualBottom = virtualTop + SystemParameters.VirtualScreenHeight;
-
-            if (savedLeft >= virtualLeft && savedLeft < virtualRight
-                && savedTop >= virtualTop && savedTop < virtualBottom)
-            {
-                WindowStartupLocation = WindowStartupLocation.Manual;
-                Left = savedLeft;
-                Top = savedTop;
-            }
-        }
-
-        if (settings.Window.Maximized)
-        {
-            WindowState = WindowState.Maximized;
-        }
-
-        if (Enum.TryParse(settings.SortColumn, ignoreCase: true, out EntrySortColumn column))
-        {
-            _sortColumn = column;
-        }
-
-        _sortDescending = settings.SortDescending;
-
-        foreach (var pair in settings.ColumnWidths)
-        {
-            var targetColumn = _detailsView.Columns
-                .FirstOrDefault(c => string.Equals(ColumnSort.GetKey(c), pair.Key, StringComparison.OrdinalIgnoreCase));
-
-            if (targetColumn is not null && pair.Value >= 40)
-            {
-                targetColumn.Width = pair.Value;
-            }
-        }
-
-        string viewMode = string.IsNullOrWhiteSpace(settings.ViewMode) ? "Details" : settings.ViewMode;
-        foreach (ComboBoxItem item in ViewModeBox.Items)
-        {
-            if (string.Equals(item.Tag as string, viewMode, StringComparison.OrdinalIgnoreCase))
-            {
-                ViewModeBox.SelectedItem = item;
-                break;
-            }
-        }
-
-        ApplyViewMode(viewMode);
-    }
 
     private void CaptureSettings()
     {
@@ -749,102 +500,50 @@ public partial class MainWindow : Window
             settings.Window.Top = Top;
         }
 
-        settings.SortColumn = _sortColumn.ToString();
-        settings.SortDescending = _sortDescending;
-        settings.LastPath = _currentPath;
+        settings.LayoutMode = DetectLayoutMode();
 
-        if (ViewModeBox.SelectedItem is ComboBoxItem { Tag: string mode })
+        settings.Panes.Clear();
+        foreach (PaneState pane in LayoutFactory.CollectPanes(_layout))
         {
-            settings.ViewMode = mode;
-        }
-
-        settings.ColumnWidths.Clear();
-        foreach (var column in _detailsView.Columns)
-        {
-            if (ColumnSort.GetKey(column) is string tag && column.Width >= 40)
+            if (_viewModels.TryGetValue(pane, out PaneViewModel? viewModel))
             {
-                settings.ColumnWidths[tag] = column.Width;
+                viewModel.PersistState();
             }
+
+            settings.Panes.Add(new PaneSettings
+            {
+                Path = pane.ActiveTab.Path,
+                ViewMode = pane.ActiveTab.ViewMode.ToString(),
+            });
         }
+
+        settings.SplitRatios.Clear();
+        foreach (SplitNode split in LayoutFactory.CollectSplits(_layout))
+        {
+            settings.SplitRatios.Add(split.FirstRatio);
+        }
+
+        settings.LastPath = _paneViews.Count > 0
+            ? _paneViews[_focusedIndex].ViewModel.CurrentPath
+            : string.Empty;
     }
 
-    /// <summary>供列表绑定使用的视图行。</summary>
-    private sealed record EntryRow(
-        string Name,
-        string FullPath,
-        bool IsDirectory,
-        string Kind,
-        string SizeText,
-        string LastModifiedText,
-        Brush IconBrush)
+    /// <summary>从布局树反推布局模式（用于持久化）。</summary>
+    private string DetectLayoutMode()
     {
-        public static EntryRow From(DirectoryListing listing, int index)
+        if (_layout is PaneNode)
         {
-            FileSystemEntry entry = listing.Entries[index];
-
-            return new EntryRow(
-                entry.Name,
-                listing.GetFullPath(entry),
-                entry.IsDirectory,
-                DescribeKind(entry),
-                entry.IsDirectory ? string.Empty : FormatSize(entry.SizeBytes),
-                entry.LastModified.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture),
-                IconBrushes.For(entry));
+            return PaneLayout.Single.ToString();
         }
 
-        private static string DescribeKind(FileSystemEntry entry)
+        if (_layout is SplitNode root && root.First is SplitNode)
         {
-            if (entry.IsDirectory)
-            {
-                return "文件夹";
-            }
-
-            string extension = entry.Extension;
-            return string.IsNullOrEmpty(extension) ? "文件" : extension;
+            // 两个子节点都分裂 → 田字四栏
+            return PaneLayout.Quad.ToString();
         }
 
-        private static string FormatSize(long bytes) => bytes switch
-        {
-            < 1024 => $"{bytes} B",
-            < 1024 * 1024 => $"{bytes / 1024.0:F1} KB",
-            < 1024L * 1024 * 1024 => $"{bytes / (1024.0 * 1024):F1} MB",
-            _ => $"{bytes / (1024.0 * 1024 * 1024):F2} GB",
-        };
-    }
-
-    /// <summary>
-    /// 占位的图标着色。真实 Shell 图标（<c>SHGetFileInfo</c> / <c>IImageList</c>）
-    /// 属于 M3 任务 3.5，这里先用按类型着色的方块，避免过早引入逐项图标开销。
-    /// </summary>
-    private static class IconBrushes
-    {
-        private static readonly Brush Folder = Freeze(Color.FromRgb(0xE8, 0xB4, 0x3C));
-        private static readonly Brush Image = Freeze(Color.FromRgb(0x4C, 0xA0, 0xE0));
-        private static readonly Brush Code = Freeze(Color.FromRgb(0x6C, 0xC0, 0x6C));
-        private static readonly Brush Document = Freeze(Color.FromRgb(0x9A, 0x9A, 0x9A));
-        private static readonly Brush Other = Freeze(Color.FromRgb(0xB0, 0xB0, 0xB0));
-
-        internal static Brush For(FileSystemEntry entry)
-        {
-            if (entry.IsDirectory)
-            {
-                return Folder;
-            }
-
-            return entry.Extension.ToLowerInvariant() switch
-            {
-                ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".webp" => Image,
-                ".cs" or ".js" or ".ts" or ".py" or ".cpp" or ".h" or ".json" or ".xml" => Code,
-                ".txt" or ".md" or ".log" or ".pdf" or ".docx" or ".xlsx" => Document,
-                _ => Other,
-            };
-        }
-
-        private static Brush Freeze(Color color)
-        {
-            var brush = new SolidColorBrush(color);
-            brush.Freeze();
-            return brush;
-        }
+        return _layout is SplitNode { Direction: SplitDirection.Horizontal }
+            ? PaneLayout.HorizontalSplit.ToString()
+            : PaneLayout.VerticalSplit.ToString();
     }
 }
