@@ -42,11 +42,17 @@ public sealed class AppSettings
 /// <summary>单栏的持久化状态。</summary>
 public sealed class PaneSettings
 {
-    /// <summary>该栏当前目录。</summary>
+    /// <summary>该栏当前目录（活动标签，保留兼容字段）。</summary>
     public string Path { get; set; } = string.Empty;
 
     /// <summary>视图模式。</summary>
     public string ViewMode { get; set; } = "Details";
+
+    /// <summary>该栏的标签路径列表，按标签条顺序。</summary>
+    public List<string> Tabs { get; set; } = [];
+
+    /// <summary>活动标签下标。</summary>
+    public int ActiveTabIndex { get; set; }
 }
 
 /// <summary>窗口几何设置。</summary>

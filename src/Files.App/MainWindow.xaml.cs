@@ -141,13 +141,33 @@ public partial class MainWindow : Window
         IReadOnlyList<PaneState> panes = LayoutFactory.CollectPanes(_layout);
         for (int i = 0; i < panes.Count && i < settings.Panes.Count; i++)
         {
-            string path = settings.Panes[i].Path;
-            if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
+            PaneSettings saved = settings.Panes[i];
+
+            // 恢复标签列表：逐个校验路径仍存在，避免启动到已删除目录
+            if (saved.Tabs.Count > 0)
             {
-                panes[i].ActiveTab.Path = path;
+                var restored = new List<TabState>(saved.Tabs.Count);
+                foreach (string tabPath in saved.Tabs)
+                {
+                    if (!string.IsNullOrWhiteSpace(tabPath) && Directory.Exists(tabPath))
+                    {
+                        restored.Add(new TabState { Path = tabPath });
+                    }
+                }
+
+                if (restored.Count > 0)
+                {
+                    panes[i].Tabs.Clear();
+                    panes[i].Tabs.AddRange(restored);
+                    panes[i].ActiveTabIndex = Math.Clamp(saved.ActiveTabIndex, 0, restored.Count - 1);
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(saved.Path) && Directory.Exists(saved.Path))
+            {
+                panes[i].ActiveTab.Path = saved.Path;
             }
 
-            if (Enum.TryParse(settings.Panes[i].ViewMode, ignoreCase: true, out ViewMode viewMode))
+            if (Enum.TryParse(saved.ViewMode, ignoreCase: true, out ViewMode viewMode))
             {
                 panes[i].ActiveTab.ViewMode = viewMode;
             }
@@ -439,6 +459,21 @@ public partial class MainWindow : Window
             SetFocusedIndex(next);
             _paneViews[next].FocusList();
             e.Handled = true;
+            return;
+        }
+
+        // 标签：Ctrl+Tab / Ctrl+Shift+Tab 切换，Ctrl+Shift+T 恢复最近关闭
+        if (modifiers.HasFlag(ModifierKeys.Control) && e.Key == Key.Tab)
+        {
+            FocusedPane?.CycleTab(modifiers.HasFlag(ModifierKeys.Shift) ? -1 : 1);
+            e.Handled = true;
+            return;
+        }
+
+        if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && e.Key == Key.T)
+        {
+            _ = FocusedPane?.ReopenClosedTabAsync();
+            e.Handled = true;
         }
     }
 
@@ -513,6 +548,8 @@ public partial class MainWindow : Window
             {
                 Path = pane.ActiveTab.Path,
                 ViewMode = pane.ActiveTab.ViewMode.ToString(),
+                Tabs = [.. pane.Tabs.Select(t => t.Path)],
+                ActiveTabIndex = pane.ActiveTabIndex,
             });
         }
 

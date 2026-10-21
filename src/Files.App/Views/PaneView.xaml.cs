@@ -1,9 +1,11 @@
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Files.App.ViewModels;
 using Files.Core.Models;
 using Files.Core.Services;
@@ -12,8 +14,12 @@ using Files.Interop;
 namespace Files.App.Views;
 
 /// <summary>
-/// 单栏视图：独立的导航、列表与文件操作。
+/// 单栏视图：独立的导航、标签条、列表与文件操作。
 /// </summary>
+/// <remarks>
+/// 整个栏只有<b>一个</b> <c>ListView</c>。切换标签时替换它的 <c>ItemsSource</c>，
+/// 而不是为每个标签保留一套视图 —— 这是"非活动标签不占内存"的实现方式。
+/// </remarks>
 public partial class PaneView : UserControl
 {
     private static readonly Brush FocusBrush = CreateFrozen(Color.FromRgb(0x00, 0x78, 0xD4));
@@ -21,6 +27,8 @@ public partial class PaneView : UserControl
     private readonly IFileOperator _fileOperator = new ShellFileOperator();
     private GridView? _detailsView;
     private DataTemplate? _listTemplate;
+    private TabViewModel? _boundTab;
+    private bool _switchingTab;
 
     /// <summary>创建栏视图。</summary>
     public PaneView()
@@ -42,7 +50,6 @@ public partial class PaneView : UserControl
 
         ViewModel = viewModel;
         DataContext = viewModel;
-        EntriesList.ItemsSource = viewModel.Rows;
 
         _detailsView = (GridView)EntriesList.View;
         _listTemplate = (DataTemplate)FindResource("ListTemplate");
@@ -50,38 +57,31 @@ public partial class PaneView : UserControl
         AddHandler(GridViewColumnHeader.ClickEvent, new RoutedEventHandler(OnColumnHeaderClick));
         EntriesList.PreviewMouseRightButtonDown += OnListRightButtonDown;
 
-        viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        TabStrip.ItemsSource = viewModel.Tabs;
+        viewModel.TabsChanged += (_, _) => UpdateTabStripVisibility();
+        viewModel.PropertyChanged += OnPanePropertyChanged;
 
-        ApplyViewMode(viewModel.ViewMode);
-        AddressBox.Text = viewModel.CurrentPath;
-        UpdateNavigationState();
+        BindActiveTab();
+        UpdateTabStripVisibility();
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        if (ViewModel is not null && string.IsNullOrEmpty(ViewModel.AddressText))
+        if (ViewModel is not null)
         {
-            AddressBox.Text = ViewModel.CurrentPath;
+            AddressBox.Text = ViewModel.ActiveTab.CurrentPath;
+            RestoreScrollAndSelection();
         }
     }
 
-    private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    // ---------- 标签 ----------
+
+    private void OnPanePropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         switch (e.PropertyName)
         {
-            case nameof(PaneViewModel.AddressText):
-                // 只在地址栏未获得焦点时同步，避免打断用户输入
-                if (!AddressBox.IsKeyboardFocusWithin)
-                {
-                    AddressBox.Text = ViewModel.AddressText;
-                }
-
-                break;
-
-            case nameof(PaneViewModel.CanGoBack):
-            case nameof(PaneViewModel.CanGoForward):
-            case nameof(PaneViewModel.CurrentPath):
-                UpdateNavigationState();
+            case nameof(PaneViewModel.ActiveTab):
+                BindActiveTab();
                 break;
 
             case nameof(PaneViewModel.IsFocused):
@@ -90,11 +90,204 @@ public partial class PaneView : UserControl
         }
     }
 
-    private void UpdateNavigationState()
+    /// <summary>把界面绑定到当前活动标签。</summary>
+    private void BindActiveTab()
     {
-        BackButton.IsEnabled = ViewModel.CanGoBack;
-        ForwardButton.IsEnabled = ViewModel.CanGoForward;
-        UpButton.IsEnabled = System.IO.Directory.GetParent(ViewModel.CurrentPath) is not null;
+        if (_boundTab is not null)
+        {
+            _boundTab.PropertyChanged -= OnTabPropertyChanged;
+        }
+
+        TabViewModel tab = ViewModel.ActiveTab;
+        _boundTab = tab;
+        tab.PropertyChanged += OnTabPropertyChanged;
+
+        // 只替换数据源，让 WPF 回收上一标签的项容器
+        _switchingTab = true;
+        EntriesList.ItemsSource = tab.Rows;
+        _switchingTab = false;
+
+        ApplyViewMode(tab.ViewMode);
+        AddressBox.Text = tab.AddressText.Length > 0 ? tab.AddressText : tab.CurrentPath;
+        UpdateNavigationState();
+
+        // 布局完成后恢复滚动位置与选择集
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, RestoreScrollAndSelection);
+    }
+
+    private void OnTabPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (!ReferenceEquals(sender, _boundTab))
+        {
+            return;
+        }
+
+        switch (e.PropertyName)
+        {
+            case nameof(TabViewModel.AddressText):
+                // 地址栏获得焦点时不打断用户输入
+                if (!AddressBox.IsKeyboardFocusWithin)
+                {
+                    AddressBox.Text = ViewModel.ActiveTab.AddressText;
+                }
+
+                break;
+
+            case nameof(TabViewModel.CanGoBack):
+            case nameof(TabViewModel.CanGoForward):
+            case nameof(TabViewModel.CurrentPath):
+                UpdateNavigationState();
+                break;
+
+            case nameof(TabViewModel.Title):
+                ViewModel.RefreshTitles();
+                break;
+        }
+    }
+
+    private void UpdateTabStripVisibility() =>
+        TabStrip.Visibility = ViewModel.ShowTabStrip ? Visibility.Visible : Visibility.Collapsed;
+
+    private void OnNewTabClick(object sender, RoutedEventArgs e) => _ = AddTabAsync();
+
+    private void OnCloseTabClick(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+
+        if (((FrameworkElement)sender).DataContext is TabViewModel tab)
+        {
+            ViewModel.CloseTab(tab);
+            RefreshTitlesSafe();
+        }
+    }
+
+    /// <summary>新建标签并导航到当前路径。</summary>
+    public async Task AddTabAsync()
+    {
+        TabViewModel tab = ViewModel.AddTab();
+        ViewModel.ActiveIndex = ViewModel.Tabs.IndexOf(tab);
+
+        RefreshTitlesSafe();
+        BindActiveTab();
+        await tab.NavigateAsync(tab.CurrentPath);
+    }
+
+    /// <summary>关闭当前标签。</summary>
+    public bool CloseActiveTab()
+    {
+        bool closed = ViewModel.CloseActiveTab();
+        if (closed)
+        {
+            RefreshTitlesSafe();
+            BindActiveTab();
+        }
+
+        return closed;
+    }
+
+    /// <summary>切换到下一个 / 上一个标签。</summary>
+    public void CycleTab(int delta)
+    {
+        ViewModel.CycleTab(delta);
+        BindActiveTab();
+    }
+
+    /// <summary>恢复最近关闭的标签。</summary>
+    public async Task ReopenClosedTabAsync()
+    {
+        TabViewModel? tab = ViewModel.ReopenClosedTab();
+        if (tab is null)
+        {
+            return;
+        }
+
+        RefreshTitlesSafe();
+        BindActiveTab();
+        await tab.NavigateAsync(tab.CurrentPath);
+    }
+
+    private void RefreshTitlesSafe()
+    {
+        try
+        {
+            ViewModel.RefreshTitles();
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException)
+        {
+            // 标题计算失败不应影响交互
+        }
+    }
+
+    // ---------- 滚动与选择 ----------
+
+    /// <summary>保存当前标签的滚动位置与选择集。</summary>
+    public void CaptureTabViewState()
+    {
+        if (_boundTab is null || _switchingTab)
+        {
+            return;
+        }
+
+        ScrollViewer? scrollViewer = FindScrollViewer(EntriesList);
+        if (scrollViewer is not null)
+        {
+            _boundTab.CaptureScrollOffset(scrollViewer.VerticalOffset);
+        }
+
+        var selected = EntriesList.SelectedItems
+            .Cast<EntryRow>()
+            .Select(row => row.FullPath);
+
+        _boundTab.CaptureSelection(selected);
+    }
+
+    private void RestoreScrollAndSelection()
+    {
+        if (_boundTab is null)
+        {
+            return;
+        }
+
+        // 选择集恢复：按路径匹配（列表项数量可达十万级，但只做一次线性扫描）
+        if (_boundTab.State.SelectedPaths.Count > 0)
+        {
+            var wanted = new HashSet<string>(_boundTab.State.SelectedPaths, StringComparer.OrdinalIgnoreCase);
+            EntriesList.SelectedItems.Clear();
+
+            foreach (EntryRow row in _boundTab.Rows)
+            {
+                if (wanted.Contains(row.FullPath))
+                {
+                    EntriesList.SelectedItems.Add(row);
+                }
+            }
+        }
+
+        if (_boundTab.State.ScrollOffset > 0)
+        {
+            ScrollViewer? scrollViewer = FindScrollViewer(EntriesList);
+            scrollViewer?.ScrollToVerticalOffset(_boundTab.State.ScrollOffset);
+        }
+    }
+
+    private static ScrollViewer? FindScrollViewer(DependencyObject root)
+    {
+        if (root is ScrollViewer viewer)
+        {
+            return viewer;
+        }
+
+        int count = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            ScrollViewer? found = FindScrollViewer(VisualTreeHelper.GetChild(root, i));
+            if (found is not null)
+            {
+                return found;
+            }
+        }
+
+        return null;
     }
 
     // ---------- 焦点 ----------
@@ -111,11 +304,21 @@ public partial class PaneView : UserControl
 
     // ---------- 导航 ----------
 
-    private async void OnBackClick(object sender, RoutedEventArgs e) => await ViewModel.GoBackAsync();
+    private void UpdateNavigationState()
+    {
+        BackButton.IsEnabled = ViewModel.ActiveTab.CanGoBack;
+        ForwardButton.IsEnabled = ViewModel.ActiveTab.CanGoForward;
+        UpButton.IsEnabled = System.IO.Directory.GetParent(ViewModel.ActiveTab.CurrentPath) is not null;
+    }
 
-    private async void OnForwardClick(object sender, RoutedEventArgs e) => await ViewModel.GoForwardAsync();
+    private async void OnBackClick(object sender, RoutedEventArgs e) =>
+        await ViewModel.ActiveTab.GoBackAsync();
 
-    private async void OnUpClick(object sender, RoutedEventArgs e) => await ViewModel.GoUpAsync();
+    private async void OnForwardClick(object sender, RoutedEventArgs e) =>
+        await ViewModel.ActiveTab.GoForwardAsync();
+
+    private async void OnUpClick(object sender, RoutedEventArgs e) =>
+        await ViewModel.ActiveTab.GoUpAsync();
 
     private void OnAddressKeyDown(object sender, KeyEventArgs e)
     {
@@ -124,16 +327,16 @@ public partial class PaneView : UserControl
             string target = PathUtility.Expand(AddressBox.Text);
             if (string.IsNullOrWhiteSpace(target))
             {
-                AddressBox.Text = ViewModel.CurrentPath;
+                AddressBox.Text = ViewModel.ActiveTab.CurrentPath;
                 return;
             }
 
             e.Handled = true;
-            _ = ViewModel.NavigateAsync(target);
+            _ = ViewModel.ActiveTab.NavigateAsync(target);
         }
         else if (e.Key == Key.Escape)
         {
-            AddressBox.Text = ViewModel.CurrentPath;
+            AddressBox.Text = ViewModel.ActiveTab.CurrentPath;
             EntriesList.Focus();
             e.Handled = true;
         }
@@ -142,13 +345,13 @@ public partial class PaneView : UserControl
     private void OnAddressGotFocus(object sender, KeyboardFocusChangedEventArgs e) => AddressBox.SelectAll();
 
     private void OnAddressLostFocus(object sender, KeyboardFocusChangedEventArgs e) =>
-        AddressBox.Text = ViewModel.CurrentPath;
+        AddressBox.Text = ViewModel.ActiveTab.CurrentPath;
 
     private void OnEntryDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (EntriesList.SelectedItem is EntryRow { IsDirectory: true } row)
         {
-            _ = ViewModel.NavigateAsync(row.FullPath);
+            _ = ViewModel.ActiveTab.NavigateAsync(row.FullPath);
         }
     }
 
@@ -168,8 +371,9 @@ public partial class PaneView : UserControl
             return;
         }
 
-        bool descending = parsed == ViewModel.SortColumn && !ViewModel.SortDescending;
-        ViewModel.ApplySort(parsed, descending);
+        TabViewModel tab = ViewModel.ActiveTab;
+        bool descending = parsed == tab.SortColumn && !tab.SortDescending;
+        tab.ApplySort(parsed, descending);
     }
 
     /// <summary>应用视图模式。</summary>
@@ -228,15 +432,16 @@ public partial class PaneView : UserControl
         MenuPaste.IsEnabled = hasClipboard;
     }
 
-    /// <summary>新建文件夹（供工具栏调用）。</summary>
+    /// <summary>新建文件夹。</summary>
     public async Task NewFolderAsync()
     {
-        if (string.IsNullOrEmpty(ViewModel.CurrentPath))
+        TabViewModel tab = ViewModel.ActiveTab;
+        if (string.IsNullOrEmpty(tab.CurrentPath))
         {
             return;
         }
 
-        string suggested = UniqueNameGenerator.Generate(ViewModel.CurrentPath, "新建文件夹");
+        string suggested = UniqueNameGenerator.Generate(tab.CurrentPath, "新建文件夹");
         var dialog = new TextInputDialog("新建文件夹", "文件夹名称：", suggested, ValidateNewName)
         {
             Owner = OwnerWindow,
@@ -247,14 +452,14 @@ public partial class PaneView : UserControl
             return;
         }
 
-        string parent = ViewModel.CurrentPath;
+        string parent = tab.CurrentPath;
         string name = dialog.Value;
 
         FileOperationResult result = await Task.Run(() => _fileOperator.CreateDirectory(parent, name));
         await HandleResultAsync(result, $"已新建文件夹：{name}");
     }
 
-    /// <summary>重命名选中项（供工具栏调用）。</summary>
+    /// <summary>重命名选中项。</summary>
     public async Task RenameAsync()
     {
         List<EntryRow> rows = SelectedRows;
@@ -283,7 +488,7 @@ public partial class PaneView : UserControl
         await HandleResultAsync(result, $"已重命名为：{newName}");
     }
 
-    /// <summary>删除选中项（供工具栏调用）。</summary>
+    /// <summary>删除选中项。</summary>
     public async Task DeleteAsync(DeleteMode mode)
     {
         List<EntryRow> rows = SelectedRows;
@@ -323,7 +528,8 @@ public partial class PaneView : UserControl
     /// <summary>粘贴。</summary>
     public async Task PasteAsync()
     {
-        if (string.IsNullOrEmpty(ViewModel.CurrentPath))
+        TabViewModel tab = ViewModel.ActiveTab;
+        if (string.IsNullOrEmpty(tab.CurrentPath))
         {
             return;
         }
@@ -334,7 +540,7 @@ public partial class PaneView : UserControl
             return;
         }
 
-        string destination = ViewModel.CurrentPath;
+        string destination = tab.CurrentPath;
         IntPtr owner = OwnerHandle;
 
         FileOperationResult result = await Task.Run(() => isCut
@@ -361,7 +567,7 @@ public partial class PaneView : UserControl
 
         if (rows.Count == 1 && rows[0].IsDirectory)
         {
-            _ = ViewModel.NavigateAsync(rows[0].FullPath);
+            _ = ViewModel.ActiveTab.NavigateAsync(rows[0].FullPath);
             return;
         }
 
@@ -459,7 +665,7 @@ public partial class PaneView : UserControl
             return "名称无效：不能包含 \\ / : * ? \" < > |，不能以点结尾，也不能是 CON、NUL 等保留名。";
         }
 
-        return UniqueNameGenerator.Exists(ViewModel.CurrentPath, name) ? "该名称已存在。" : null;
+        return UniqueNameGenerator.Exists(ViewModel.ActiveTab.CurrentPath, name) ? "该名称已存在。" : null;
     }
 
     // ---------- 键盘 ----------
@@ -481,6 +687,16 @@ public partial class PaneView : UserControl
         else if (e.Key == Key.N && modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
         {
             _ = NewFolderAsync();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.T && modifiers == ModifierKeys.Control)
+        {
+            _ = AddTabAsync();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.W && modifiers == ModifierKeys.Control)
+        {
+            CloseActiveTab();
             e.Handled = true;
         }
         else if (e.Key == Key.F2)
@@ -515,7 +731,7 @@ public partial class PaneView : UserControl
         }
         else if (e.Key == Key.Back)
         {
-            _ = ViewModel.GoBackAsync();
+            _ = ViewModel.ActiveTab.GoBackAsync();
             e.Handled = true;
         }
     }
@@ -524,7 +740,7 @@ public partial class PaneView : UserControl
     {
         var selected = EntriesList.SelectedItems.Cast<EntryRow>().ToHashSet();
 
-        foreach (EntryRow row in ViewModel.Rows)
+        foreach (EntryRow row in ViewModel.ActiveTab.Rows)
         {
             if (selected.Contains(row))
             {

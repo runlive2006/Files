@@ -16,6 +16,28 @@
                            Foreground="#888888" VerticalAlignment="Center" />
             </StackPanel>
         </DataTemplate>
+
+        <!-- 单个标签 -->
+        <DataTemplate x:Key="TabTemplate">
+            <Border x:Name="TabBorder" Padding="8,3" Margin="0,0,2,0"
+                    Background="#F0F0F0" BorderThickness="0,0,0,2" BorderBrush="Transparent">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding Title}" VerticalAlignment="Center"
+                               MaxWidth="160" TextTrimming="CharacterEllipsis"
+                               ToolTip="{Binding CurrentPath}" />
+                    <Button Content="✕" Click="OnCloseTabClick" Margin="6,0,0,0"
+                            Padding="0" Width="16" Height="16" FontSize="10"
+                            Background="Transparent" BorderThickness="0"
+                            ToolTip="关闭标签 (Ctrl+W)" />
+                </StackPanel>
+            </Border>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IsActive}" Value="True">
+                    <Setter TargetName="TabBorder" Property="Background" Value="White" />
+                    <Setter TargetName="TabBorder" Property="BorderBrush" Value="#0078D4" />
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
     </UserControl.Resources>
 
     <Border x:Name="FocusBorder" BorderThickness="2" BorderBrush="Transparent">
@@ -27,6 +49,7 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
                 <Button x:Name="BackButton" Grid.Column="0" Content="←" Click="OnBackClick"
@@ -42,7 +65,21 @@
                          GotKeyboardFocus="OnAddressGotFocus"
                          LostKeyboardFocus="OnAddressLostFocus"
                          ToolTip="输入路径后回车（支持 %USERPROFILE% 等环境变量）" />
+
+                <Button x:Name="NewTabButton" Grid.Column="4" Content="＋" Click="OnNewTabClick"
+                        ToolTip="新建标签 (Ctrl+T)" Padding="6,1" MinWidth="26" Margin="4,0,0,0" />
             </Grid>
+
+            <!-- 标签条：仅在标签数 ≥2 时显示 -->
+            <ItemsControl x:Name="TabStrip" DockPanel.Dock="Top" Margin="2,2,2,0"
+                          ItemTemplate="{StaticResource TabTemplate}"
+                          Visibility="Collapsed">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+            </ItemsControl>
 
             <ListView x:Name="EntriesList" Margin="2"
                       SelectionMode="Extended"

@@ -36,8 +36,8 @@ public sealed class TabState
     /// <summary>是否降序。</summary>
     public bool SortDescending { get; set; }
 
-    /// <summary>滚动位置（以行为单位，便于虚拟化还原）。</summary>
-    public int ScrollOffset { get; set; }
+    /// <summary>滚动位置（像素，便于虚拟化还原）。</summary>
+    public double ScrollOffset { get; set; }
 
     /// <summary>已选中的条目路径。</summary>
     public List<string> SelectedPaths { get; init; } = [];
@@ -76,6 +76,10 @@ public enum ViewMode
 /// <summary>
 /// 一个栏：持有若干标签，其中一个是活动标签。
 /// </summary>
+/// <remarks>
+/// 这里承载标签集合的增删与活动索引维护。索引调整规则容易写错，
+/// 因此集中在模型里并用单元测试锁定（见 <c>PaneStateTests</c>）。
+/// </remarks>
 public sealed class PaneState
 {
     /// <summary>该栏的标签集合，至少包含一个。</summary>
@@ -85,7 +89,92 @@ public sealed class PaneState
     public int ActiveTabIndex { get; set; }
 
     /// <summary>活动标签；集合保证非空。</summary>
-    public TabState ActiveTab => Tabs[ActiveTabIndex];
+    public TabState ActiveTab
+    {
+        get
+        {
+            if (Tabs.Count == 0)
+            {
+                throw new InvalidOperationException("栏中至少应有一个标签。");
+            }
+
+            // 防御越界：外部直接改 ActiveTabIndex 时不应崩溃
+            int index = Math.Clamp(ActiveTabIndex, 0, Tabs.Count - 1);
+            return Tabs[index];
+        }
+    }
+
+    /// <summary>
+    /// 在活动标签之后插入新标签，并把它设为活动标签。
+    /// </summary>
+    public TabState AddTab(TabState tab)
+    {
+        ArgumentNullException.ThrowIfNull(tab);
+
+        int insertAt = Math.Clamp(ActiveTabIndex + 1, 0, Tabs.Count);
+        Tabs.Insert(insertAt, tab);
+        ActiveTabIndex = insertAt;
+        return tab;
+    }
+
+    /// <summary>
+    /// 关闭指定标签。至少保留一个标签，因此关闭最后一个会返回 <see langword="false"/>。
+    /// </summary>
+    /// <returns>是否真的关闭了。</returns>
+    public bool CloseTab(int index)
+    {
+        if (Tabs.Count <= 1 || index < 0 || index >= Tabs.Count)
+        {
+            return false;
+        }
+
+        Tabs.RemoveAt(index);
+
+        if (index < ActiveTabIndex)
+        {
+            // 关掉的是活动标签左边的一个，活动标签整体左移
+            ActiveTabIndex--;
+        }
+        else if (index == ActiveTabIndex)
+        {
+            // 关掉的是活动标签：由右邻接替；若它原本是最后一个，则退到新的最后一个
+            if (ActiveTabIndex >= Tabs.Count)
+            {
+                ActiveTabIndex = Tabs.Count - 1;
+            }
+        }
+
+        ActiveTabIndex = Math.Clamp(ActiveTabIndex, 0, Tabs.Count - 1);
+        return true;
+    }
+
+    /// <summary>激活指定标签。</summary>
+    public void Activate(int index)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(index);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, Tabs.Count);
+
+        ActiveTabIndex = index;
+    }
+
+    /// <summary>把活动标签移到另一栏。</summary>
+    /// <remarks>
+    /// 只有当前栏还有别的标签时才允许移出，避免出现空栏。
+    /// </remarks>
+    public bool TryDetachActiveTab(out TabState? detached)
+    {
+        detached = null;
+
+        if (Tabs.Count <= 1)
+        {
+            return false;
+        }
+
+        detached = ActiveTab;
+        Tabs.RemoveAt(ActiveTabIndex);
+        ActiveTabIndex = Math.Clamp(ActiveTabIndex, 0, Tabs.Count - 1);
+        return true;
+    }
 }
 
 /// <summary>
