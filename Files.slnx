@@ -1,7 +1,11 @@
 <Solution>
+  <Folder Name="/bench/">
+    <Project Path="bench/Files.Bench/Files.Bench.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/Files.App/Files.App.csproj" />
     <Project Path="src/Files.Core/Files.Core.csproj" />
+    <Project Path="src/Files.Interop/Files.Interop.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Files.Core.Tests/Files.Core.Tests.csproj" />

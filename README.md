@@ -6,22 +6,25 @@ C# (.NET 10 / WPF) 桌面文件管理器。
 
 | 文档 | 内容 |
 | --- | --- |
-| [docs/PRD.md](docs/PRD.md) | 产品需求：定位、多栏模型、Win7 功能覆盖矩阵、性能预算、架构约束、风险 |
+| [docs/PRD.md](docs/PRD.md) | 产品需求：定位、多栏+多标签模型、Win7 功能覆盖矩阵、性能预算、架构约束、风险 |
 | [docs/DEV-PLAN.md](docs/DEV-PLAN.md) | 开发计划：M1–M5 任务分解、估时、退出判据、测试矩阵、阻塞项 |
-| [docs/adr/ADR-001](docs/adr/ADR-001-runtime-and-ui-framework.md) | 运行时与 UI 框架选型（含 Win7 兼容性事实核查）— **待签字** |
+| [docs/PERF-BASELINE.md](docs/PERF-BASELINE.md) | 性能基线实测：5 万/10 万项目录枚举数据与结论 |
+| [docs/adr/ADR-001](docs/adr/ADR-001-runtime-and-ui-framework.md) | 运行时与 UI 框架选型（含 Win7 兼容性事实核查）— 已接受 |
 
 ## 解决方案结构
 
 | 路径 | 说明 |
 | --- | --- |
-| `src/Files.Core` | 与 UI 无关的核心逻辑（文件系统抽象、模型） |
+| `src/Files.Core` | 与 UI、与平台都无关的核心逻辑（模型、路径、诊断、布局） |
+| `src/Files.Interop` | Win32 / Shell 互操作（`FindFirstFileExW` 目录枚举等） |
 | `src/Files.App` | WPF 桌面应用 |
 | `tests/Files.Core.Tests` | MSTest 单元测试 |
+| `bench/Files.Bench` | 目录枚举性能基准台 |
 
 ## 环境要求
 
 - .NET SDK 10.0.100（见 `global.json`，允许向前滚动到最新功能带）
-- Windows（WPF 目标为 `net10.0-windows`）
+- Windows 10 22H2+ / Windows 11，**仅 x64**（WPF 目标为 `net10.0-windows`）
 
 ## 常用命令
 
@@ -34,6 +37,12 @@ dotnet build Files.slnx
 
 # 运行测试（本仓库使用自包含测试运行器）
 .\scripts\test.ps1
+
+# 性能基准（10 万项目录枚举，含预算判定）
+.\scripts\bench.ps1 -Count 100000 -Gate
+
+# 启动应用并显示性能 HUD（FPS / 最差帧 / 内存）
+dotnet run --project src/Files.App -- --perf
 ```
 
 ## 构建说明

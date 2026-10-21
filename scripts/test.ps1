@@ -22,10 +22,17 @@ if (-not $NoBuild) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
-$testExe = Join-Path $root 'tests/Files.Core.Tests/bin/Debug/net10.0/Files.Core.Tests.exe'
-if (-not (Test-Path $testExe)) {
-    Write-Error "未找到测试可执行文件：$testExe（请先构建）。"
+# 目标框架可能变化（如 net10.0 -> net10.0-windows），因此动态查找最新的测试可执行文件，
+# 避免静默运行上一轮的陈旧产物。
+$testExe = Get-ChildItem -Path (Join-Path $root 'tests/Files.Core.Tests/bin') -Filter 'Files.Core.Tests.exe' -Recurse -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+
+if ($null -eq $testExe) {
+    Write-Error '未找到测试可执行文件（请先构建）。'
 }
 
-& $testExe
+Write-Host "运行：$($testExe.FullName)" -ForegroundColor DarkGray
+
+& $testExe.FullName
 exit $LASTEXITCODE

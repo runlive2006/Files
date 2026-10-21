@@ -23,6 +23,9 @@
             <StatusBarItem>
                 <TextBlock x:Name="StatusText" Text="就绪" />
             </StatusBarItem>
+            <StatusBarItem HorizontalAlignment="Right">
+                <TextBlock x:Name="PerfText" Foreground="#666666" />
+            </StatusBarItem>
         </StatusBar>
 
         <ListView x:Name="EntriesList" Margin="4"

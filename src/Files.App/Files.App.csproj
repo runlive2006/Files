@@ -1,7 +1,8 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\Files.Core\Files.Core.csproj" />
+    <ProjectReference Include="..\Files.Interop\Files.Interop.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
