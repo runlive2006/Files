@@ -1,16 +1,27 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <ItemGroup>
-    <ProjectReference Include="..\Files.Core\Files.Core.csproj" />
-    <ProjectReference Include="..\Files.Interop\Files.Interop.csproj" />
-  </ItemGroup>
-
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <AssemblyName>Files</AssemblyName>
+    <RootNamespace>Files.App</RootNamespace>
+    <Product>Files</Product>
+    <AssemblyTitle>Files 文件管理器</AssemblyTitle>
+    <Description>多栏文件管理器（Windows 7 资源管理器功能基线）</Description>
+    <Version>0.1.0</Version>
+    <FileVersion>0.1.0.0</FileVersion>
+    <InformationalVersion>0.1.0-m1</InformationalVersion>
+    <Company>Files</Company>
+    <!-- 测试版：允许把调试符号一起产出，便于定位崩溃 -->
+    <DebugType>embedded</DebugType>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Files.Core\Files.Core.csproj" />
+    <ProjectReference Include="..\Files.Interop\Files.Interop.csproj" />
+  </ItemGroup>
 
 </Project>

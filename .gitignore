@@ -484,3 +484,6 @@ $RECYCLE.BIN/
 # Local toolchain caches created by this repository's build setup
 .dotnet/
 *.mta
+
+# 发布产物（临时测试包不入库）
+artifacts/
