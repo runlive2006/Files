@@ -470,7 +470,7 @@ public partial class PaneView : UserControl
             case ViewMode.List:
                 EntriesList.View = null;
                 EntriesList.ItemTemplate = _listTemplate;
-                EntriesList.ItemsPanel = null;
+                RestoreDefaultItemsPanel();
                 break;
 
             case ViewMode.Thumbnails:
@@ -487,10 +487,22 @@ public partial class PaneView : UserControl
             default:
                 EntriesList.View = _detailsView;
                 EntriesList.ItemTemplate = null;
-                EntriesList.ItemsPanel = null;
+                RestoreDefaultItemsPanel();
                 break;
         }
     }
+
+    /// <summary>
+    /// 恢复 <see cref="ItemsControl.ItemsPanel"/> 的默认值。
+    /// </summary>
+    /// <remarks>
+    /// <b>不能用 <c>ItemsPanel = null</c></b>：ListView 的默认面板（<c>VirtualizingStackPanel</c>）
+    /// 定义在主题样式里，显式赋 null 会覆盖该样式值，导致 ItemsPresenter 找不到面板，
+    /// 列表中<b>一条都不渲染</b>。必须用 <see cref="DependencyObject.ClearValue"/>
+    /// 把本地值清掉，让样式值重新生效。
+    /// </remarks>
+    private void RestoreDefaultItemsPanel() =>
+        EntriesList.ClearValue(ItemsControl.ItemsPanelProperty);
 
     // ---------- 文件操作 ----------
 

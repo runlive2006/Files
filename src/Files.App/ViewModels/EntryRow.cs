@@ -27,6 +27,16 @@ public sealed record EntryRow(
     Brush IconBrush,
     ImageSource? Icon)
 {
+    /// <summary>
+    /// 返回显示名称。
+    /// </summary>
+    /// <remarks>
+    /// 列表项的 UI Automation 名称在未显式设置时会退化为 <c>ToString()</c>。
+    /// 默认的 record ToString 会输出全部字段，屏幕阅读器会念出一长串内部数据，
+    /// 因此这里重写为只返回名称。
+    /// </remarks>
+    public override string ToString() => Name;
+
     /// <summary>真实图标的可见性。</summary>
     public Visibility IconVisibility => Icon is null ? Visibility.Collapsed : Visibility.Visible;
 
