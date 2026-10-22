@@ -6,9 +6,12 @@ C# (.NET 10 / WPF) 桌面文件管理器。
 
 | 文档 | 内容 |
 | --- | --- |
+| [docs/BUILD.md](docs/BUILD.md) | **构建说明**：前置条件、一键构建、参数、产物、常见问题 |
 | [docs/PRD.md](docs/PRD.md) | 产品需求：定位、多栏+多标签模型、Win7 功能覆盖矩阵、性能预算、架构约束、风险 |
 | [docs/DEV-PLAN.md](docs/DEV-PLAN.md) | 开发计划：M1–M5 任务分解、估时、退出判据、测试矩阵、阻塞项 |
 | [docs/PERF-BASELINE.md](docs/PERF-BASELINE.md) | 性能基线实测：5 万/10 万项目录枚举数据与结论 |
+| [docs/DEPLOY.md](docs/DEPLOY.md) | 分发与运行：数据位置、SmartScreen、权限要求 |
+| [docs/USER-TEST.md](docs/USER-TEST.md) | 用户测试清单 |
 | [docs/adr/ADR-001](docs/adr/ADR-001-runtime-and-ui-framework.md) | 运行时与 UI 框架选型（含 Win7 兼容性事实核查）— 已接受 |
 
 ## 解决方案结构
@@ -29,13 +32,13 @@ C# (.NET 10 / WPF) 桌面文件管理器。
 ## 常用命令
 
 ```powershell
-# 还原依赖（首次需要联网）
-dotnet restore Files.slnx
+# 一键构建（推荐）：还原 + 构建 + 测试 + 发布到 artifacts/
+.\scripts\build.ps1
 
-# 构建
-dotnet build Files.slnx
+# 双击构建（不熟悉命令行时）
+scripts\build.cmd
 
-# 运行测试（本仓库使用自包含测试运行器）
+# 只跑测试
 .\scripts\test.ps1
 
 # 性能基准（10 万项目录枚举，含预算判定）
@@ -45,13 +48,15 @@ dotnet build Files.slnx
 dotnet run --project src/Files.App -- --perf
 ```
 
+构建细节与常见问题见 [docs/BUILD.md](docs/BUILD.md)。
+
 ## 构建说明
 
 - 依赖包缓存在仓库内的 `.dotnet/packages`，不污染用户的全局 NuGet 缓存。
 - 测试项目启用了 Microsoft.Testing.Platform 自包含运行器（`EnableMSTestRunner`），
   因此可以直接执行测试可执行文件，无需 VSTest 外部宿主。
-- 在受限/沙箱化环境中构建时，MSBuild 的多节点模式与编译服务器可能因进程间通信受限而失败，
-  此时可用 `dotnet build Files.slnx -m:1 --disable-build-servers`。
+- 构建统一使用单节点 + 禁用构建服务器（`-m:1 --disable-build-servers`）：
+  受限环境下多节点与编译服务器会因进程间通信失败而报错。项目规模小，速度差异可忽略。
 
 ## 许可
 
