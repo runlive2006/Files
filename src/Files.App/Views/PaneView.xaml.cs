@@ -28,6 +28,7 @@ public partial class PaneView : UserControl
     private GridView? _detailsView;
     private DataTemplate? _listTemplate;
     private DataTemplate? _thumbnailTemplate;
+    private ItemsPanelTemplate? _thumbnailsPanel;
     private IconProvider? _icons;
     private TabViewModel? _boundTab;
     private bool _switchingTab;
@@ -58,6 +59,7 @@ public partial class PaneView : UserControl
         _detailsView = (GridView)EntriesList.View;
         _listTemplate = (DataTemplate)FindResource("ListTemplate");
         _thumbnailTemplate = (DataTemplate)FindResource("ThumbnailTemplate");
+        _thumbnailsPanel = (ItemsPanelTemplate)FindResource("ThumbnailsPanel");
 
         AddHandler(GridViewColumnHeader.ClickEvent, new RoutedEventHandler(OnColumnHeaderClick));
         EntriesList.PreviewMouseRightButtonDown += OnListRightButtonDown;
@@ -477,11 +479,9 @@ public partial class PaneView : UserControl
                 EntriesList.View = null;
                 EntriesList.ItemTemplate = _thumbnailTemplate;
 
-                // 网格布局：换成可虚拟化的换行面板，否则大目录会一次性建满容器
-                var panelFactory = new FrameworkElementFactory(typeof(VirtualizingWrapPanel));
-                panelFactory.SetValue(VirtualizingWrapPanel.ItemWidthProperty, 128.0);
-                panelFactory.SetValue(VirtualizingWrapPanel.ItemHeightProperty, 104.0);
-                EntriesList.ItemsPanel = new ItemsPanelTemplate(panelFactory);
+                // 网格布局：换成可虚拟化的换行面板，否则大目录会一次性建满容器。
+                // 模板定义在 XAML 中，运行时构造的模板不会被正确应用。
+                EntriesList.ItemsPanel = _thumbnailsPanel;
                 break;
 
             default:

@@ -4,10 +4,13 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:local="clr-namespace:Files.App"
-             xmlns:views="clr-namespace:Files.App.Views"
              mc:Ignorable="d">
 
     <UserControl.Resources>
+        <!-- 缩略图视图的网格面板。内置 WrapPanel 不虚拟化，大目录性能受限（见 DEV-PLAN 已知限制） -->
+        <ItemsPanelTemplate x:Key="ThumbnailsPanel">
+            <WrapPanel />
+        </ItemsPanelTemplate>
         <!-- 列表视图的项模板 -->
         <DataTemplate x:Key="ListTemplate">
             <StackPanel Orientation="Horizontal" Margin="2,1">
