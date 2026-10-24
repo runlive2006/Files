@@ -37,6 +37,9 @@
                           Click="OnViewListClick" />
                 <MenuItem x:Name="MenuViewThumbnails" Header="缩略图" IsCheckable="True"
                           Click="OnViewThumbnailsClick" />
+                <Separator />
+                <MenuItem x:Name="MenuShowDetailsPane" Header="详情窗格" IsCheckable="True"
+                          IsChecked="False" Click="OnToggleDetailsPaneClick" InputGestureText="Alt+Shift+P" />
             </MenuItem>
 
             <MenuItem Header="设置" Padding="10,4">
@@ -47,7 +50,33 @@
             </MenuItem>
         </Menu>
 
-        <StatusBar DockPanel.Dock="Bottom">
+        <!-- 详情窗格（窗口级，显示焦点栏的选中项） -->
+        <Border x:Name="DetailsPane" DockPanel.Dock="Bottom"
+                Background="#FAFAFA" BorderBrush="#E0E0E0" BorderThickness="0,1,0,0"
+                Padding="12,8" Height="88" Visibility="Collapsed">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0" Width="48" Height="48" Margin="0,0,14,0"
+                        VerticalAlignment="Center" Background="#F0F0F0" CornerRadius="4">
+                    <Image x:Name="DetailsIcon" Stretch="Uniform" Margin="6"
+                           RenderOptions.BitmapScalingMode="HighQuality" />
+                </Border>
+
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock x:Name="DetailsTitle" FontWeight="SemiBold" FontSize="13"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBlock x:Name="DetailsSubtitle" Foreground="#666666" Margin="0,3,0,0"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBlock x:Name="DetailsDetail" Foreground="#666666" Margin="0,3,0,0"
+                               TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+            </Grid>
+        </Border>
+        <StatusBar x:Name="StatusBar" DockPanel.Dock="Bottom">
             <StatusBarItem>
                 <TextBlock x:Name="PaneIndicatorText" Text="栏 1/1" Foreground="#666666" />
             </StatusBarItem>

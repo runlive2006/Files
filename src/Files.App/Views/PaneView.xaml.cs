@@ -43,6 +43,8 @@ public partial class PaneView : UserControl
     /// <summary>本栏的视图模型。</summary>
     public PaneViewModel ViewModel { get; private set; } = null!;
 
+    /// <summary>选中项变化时触发（供窗口更新详情窗格）。</summary>
+    public event EventHandler? SelectionChanged;
     /// <summary>栏获得焦点时触发（供窗口更新焦点栏）。</summary>
     public event EventHandler? PaneActivated;
 
@@ -63,6 +65,7 @@ public partial class PaneView : UserControl
 
         AddHandler(GridViewColumnHeader.ClickEvent, new RoutedEventHandler(OnColumnHeaderClick));
         EntriesList.PreviewMouseRightButtonDown += OnListRightButtonDown;
+        EntriesList.SelectionChanged += (_, _) => SelectionChanged?.Invoke(this, EventArgs.Empty);
 
         TabStrip.ItemsSource = viewModel.Tabs;
         viewModel.TabsChanged += (_, _) => UpdateTabStripVisibility();
@@ -464,6 +467,24 @@ public partial class PaneView : UserControl
         tab.ApplySort(parsed, descending);
     }
 
+    /// <summary>
+    /// 应用行高密度。
+    /// </summary>
+    /// <remarks>
+    /// 只替换 <c>ItemContainerStyle</c>，且样式都用 BasedOn 继承默认样式、
+    /// 仅覆盖 Padding/MinHeight。整体替换 ControlTemplate 会丢默认模板，导致列表空白。
+    /// </remarks>
+    public void ApplyRowHeight(Files.Core.Services.Settings.RowDensity density)
+    {
+        string key = density switch
+        {
+            Files.Core.Services.Settings.RowDensity.Compact => "RowCompact",
+            Files.Core.Services.Settings.RowDensity.Comfortable => "RowComfortable",
+            _ => "RowNormal",
+        };
+
+        EntriesList.ItemContainerStyle = (Style)FindResource(key);
+    }
     /// <summary>应用视图模式。</summary>
     public void ApplyViewMode(ViewMode mode)
     {
@@ -512,6 +533,11 @@ public partial class PaneView : UserControl
         ? IntPtr.Zero
         : new System.Windows.Interop.WindowInteropHelper(OwnerWindow).Handle;
 
+    /// <summary>当前选中的行（供窗口构造详情窗格内容）。</summary>
+    public IReadOnlyList<EntryRow> CurrentSelection => SelectedRows;
+
+    /// <summary>当前标签的目录路径。</summary>
+    public string CurrentDirectory => ViewModel.ActiveTab.CurrentPath;
     private List<EntryRow> SelectedRows => EntriesList.SelectedItems.Cast<EntryRow>().ToList();
 
     private IReadOnlyList<string> SelectedPaths => SelectedRows.Select(r => r.FullPath).ToList();

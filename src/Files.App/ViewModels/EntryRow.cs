@@ -25,7 +25,9 @@ public sealed record EntryRow(
     string SizeText,
     string LastModifiedText,
     Brush IconBrush,
-    ImageSource? Icon)
+    ImageSource? Icon,
+    long SizeBytes,
+    DateTimeOffset LastModifiedUtc)
 {
     /// <summary>
     /// 返回显示名称。
@@ -64,7 +66,9 @@ public sealed record EntryRow(
             entry.IsDirectory ? string.Empty : FormatSize(entry.SizeBytes),
             entry.LastModified.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture),
             IconBrushes.For(entry),
-            icons?.GetIcon(entry, largeIcon));
+            icons?.GetIcon(entry, largeIcon),
+            entry.SizeBytes,
+            entry.LastModified);
     }
 
     private static string DescribeKind(FileSystemEntry entry)

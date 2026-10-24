@@ -91,6 +91,9 @@ public sealed class ViewSettings
     /// <summary>是否显示状态栏。</summary>
     public bool ShowStatusBar { get; set; } = true;
 
+    /// <summary>是否显示详情窗格。</summary>
+    public bool ShowDetailsPane { get; set; }
+
     /// <summary>行高密度。</summary>
     public RowDensity RowHeight { get; set; } = RowDensity.Normal;
 

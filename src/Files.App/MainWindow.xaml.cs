@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Input;
 using System.Windows.Threading;
 using Files.App.Diagnostics;
@@ -54,6 +55,7 @@ public partial class MainWindow : Window
         _lister.IncludeHidden = _settings.Current.View.ShowHidden;
 
         MenuUseSystemIcons.IsChecked = true;
+        ApplyChromeSettings();
 
         _hudTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -273,6 +275,7 @@ public partial class MainWindow : Window
         {
             var view = new PaneView();
             view.Initialize(GetViewModel(paneNode.Pane), _icons);
+            view.ApplyRowHeight(_settings.Current.View.RowHeight);
             view.PaneActivated += (_, _) =>
             {
                 int index = _paneViews.IndexOf(view);
@@ -284,6 +287,9 @@ public partial class MainWindow : Window
 
             // 跨栏拖放移动后，源栏也需要刷新
             view.ContentChanged += async (_, _) => await RefreshAllPanesAsync();
+
+            // 选中项变化时刷新详情窗格（带防抖）
+            view.SelectionChanged += (_, _) => OnPaneSelectionChanged();
 
             _paneViews.Add(view);
             return view;
@@ -390,6 +396,9 @@ public partial class MainWindow : Window
 
         StatusText.Text = _paneViews[_focusedIndex].ViewModel.StatusText;
         SyncViewMenu(_paneViews[_focusedIndex].ViewModel.ViewMode);
+
+        // 焦点栏切换后详情窗格要跟随新栏的选中项
+        UpdateDetailsPane();
         UpdatePaneIndicator();
     }
 
@@ -462,6 +471,16 @@ public partial class MainWindow : Window
 
             SetFocusedIndex(next);
             _paneViews[next].FocusList();
+            e.Handled = true;
+            return;
+        }
+
+        // Alt+Shift+P：切换详情窗格
+        if (modifiers == (ModifierKeys.Alt | ModifierKeys.Shift) && e.Key == Key.P)
+        {
+            bool next = !_showDetailsPane;
+            _settings.Current.View.ShowDetailsPane = next;
+            SetDetailsPaneVisible(next);
             e.Handled = true;
             return;
         }
@@ -557,6 +576,209 @@ public partial class MainWindow : Window
         StatusText.Text = enabled ? "已启用系统图标" : "已改用占位图标";
     }
 
+    /// <summary>
+    /// 应用窗口级外观设置（状态栏、行高、详情窗格）。
+    /// </summary>
+    private void ApplyChromeSettings()
+    {
+        var view = _settings.Current.View;
+
+        StatusBar.Visibility = view.ShowStatusBar ? Visibility.Visible : Visibility.Collapsed;
+
+        // 详情窗格状态：设置窗口与菜单任一修改都同步到同一处
+        SetDetailsPaneVisible(view.ShowDetailsPane);
+
+        foreach (PaneView pane in _paneViews)
+        {
+            pane.ApplyRowHeight(view.RowHeight);
+        }
+    }
+    // ---------- 详情窗格 ----------
+
+    private readonly DirectorySummaryService _summaryService = new();
+    private readonly LatestTaskRunner _detailsRunner = new();
+    private DispatcherTimer? _detailsDebounce;
+    private bool _showDetailsPane;
+
+    private void OnToggleDetailsPaneClick(object sender, RoutedEventArgs e)
+    {
+        bool visible = MenuShowDetailsPane.IsChecked;
+        _settings.Current.View.ShowDetailsPane = visible;
+        SetDetailsPaneVisible(visible);
+    }
+
+    /// <summary>显示/隐藏详情窗格。</summary>
+    private void SetDetailsPaneVisible(bool visible)
+    {
+        _showDetailsPane = visible;
+        MenuShowDetailsPane.IsChecked = visible;
+        DetailsPane.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+
+        if (visible)
+        {
+            UpdateDetailsPane();
+        }
+    }
+
+    /// <summary>
+    /// 按焦点栏的当前选中项刷新详情窗格。
+    /// </summary>
+    /// <remarks>
+    /// 选择变化可能非常频繁（按住方向键浏览），因此做 150ms 防抖；
+    /// 文件夹的子项统计走后台任务，新请求会取消旧请求（LatestTaskRunner）。
+    /// </remarks>
+    private void UpdateDetailsPane()
+    {
+        if (!_showDetailsPane)
+        {
+            return;
+        }
+
+        PaneView? pane = FocusedPane;
+        if (pane is null)
+        {
+            ApplyDetailsContent(DetailsPaneContent.Empty, null);
+            return;
+        }
+
+        IReadOnlyList<EntryRow> selection = pane.CurrentSelection;
+
+        if (selection.Count == 0)
+        {
+            // 无选中：显示当前目录汇总（同样异步，避免大目录卡顿）
+            string directory = pane.CurrentDirectory;
+            ApplyDetailsContent(
+                DetailsPaneFormatter.NoSelection(directory, null),
+                null);
+
+            _ = RefreshDirectorySummaryAsync(directory);
+            return;
+        }
+
+        if (selection.Count > 1)
+        {
+            int folderCount = selection.Count(r => r.IsDirectory);
+            long totalSize = selection.Where(r => !r.IsDirectory).Sum(r => r.SizeBytes);
+
+            ApplyDetailsContent(
+                DetailsPaneFormatter.Multiple(selection.Count, totalSize, folderCount),
+                null);
+
+            return;
+        }
+
+        EntryRow single = selection[0];
+
+        if (single.IsDirectory)
+        {
+            // 先显示「正在统计」，统计完成后再更新
+            ApplyDetailsContent(
+                DetailsPaneFormatter.SingleFolder(single.FullPath, null, single.LastModifiedUtc),
+                single.Icon);
+
+            _ = RefreshFolderSummaryAsync(single.FullPath);
+            return;
+        }
+
+        ApplyDetailsContent(
+            DetailsPaneFormatter.SingleFile(
+                single.FullPath,
+                single.SizeBytes,
+                single.LastModifiedUtc,
+                single.LastModifiedUtc),
+            single.Icon);
+    }
+
+    /// <summary>后台统计目录直接子项，完成后更新详情窗格。</summary>
+    private async Task RefreshFolderSummaryAsync(string directoryPath)
+    {
+        try
+        {
+            DirectorySummary? summary = await _detailsRunner.RunAsync(
+                _ => _summaryService.Summarize(directoryPath));
+
+            if (summary is null)
+            {
+                return;
+            }
+
+            // 统计期间用户可能已改选，校验当前仍选中该文件夹
+            PaneView? pane = FocusedPane;
+            IReadOnlyList<EntryRow> current = pane?.CurrentSelection ?? [];
+
+            if (current.Count != 1
+                || !current[0].IsDirectory
+                || !string.Equals(current[0].FullPath, directoryPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            ApplyDetailsContent(
+                DetailsPaneFormatter.SingleFolder(directoryPath, summary, current[0].LastModifiedUtc),
+                current[0].Icon);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 统计失败保持「正在统计」状态即可，不打断用户
+        }
+    }
+
+    /// <summary>后台统计当前目录汇总。</summary>
+    private async Task RefreshDirectorySummaryAsync(string directoryPath)
+    {
+        DirectorySummary? summary = await _detailsRunner.RunAsync(
+            _ => _summaryService.Summarize(directoryPath));
+
+        if (summary is null)
+        {
+            return;
+        }
+
+        PaneView? pane = FocusedPane;
+        if (pane is null || pane.CurrentSelection.Count != 0)
+        {
+            return;
+        }
+
+        ApplyDetailsContent(
+            DetailsPaneFormatter.NoSelection(pane.CurrentDirectory, summary),
+            null);
+    }
+
+    /// <summary>把内容写到详情窗格的控件上。</summary>
+    private void ApplyDetailsContent(DetailsPaneContent content, ImageSource? icon)
+    {
+        DetailsTitle.Text = content.PrimaryText;
+        DetailsSubtitle.Text = content.SecondaryText;
+        DetailsDetail.Text = content.DetailText;
+        DetailsIcon.Source = icon;
+    }
+
+    /// <summary>选择变化时的入口（带防抖）。</summary>
+    private void OnPaneSelectionChanged()
+    {
+        if (!_showDetailsPane)
+        {
+            return;
+        }
+
+        if (_detailsDebounce is null)
+        {
+            _detailsDebounce = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(150),
+            };
+
+            _detailsDebounce.Tick += (_, _) =>
+            {
+                _detailsDebounce!.Stop();
+                UpdateDetailsPane();
+            };
+        }
+
+        _detailsDebounce.Stop();
+        _detailsDebounce.Start();
+    }
     // ---------- 设置窗口 ----------
 
     private void OnOpenSettingsClick(object sender, RoutedEventArgs e) => OpenSettings();
@@ -611,9 +833,16 @@ public partial class MainWindow : Window
             case "View.ShowExtensions":
             case "View.IconSize":
             case "View.RowHeight":
+                ApplyChromeSettings();
+                break;
+
             case "View.AlternateRowColor":
             case "View.ShowGridLines":
             case "View.FolderFirst":
+            case "View.ShowDetailsPane":
+                ApplyChromeSettings();
+                break;
+
             case "View.ShowStatusBar":
             case "Perf.ShowPerfHud":
                 // A/B 档：只需重设视图参数，不重读目录

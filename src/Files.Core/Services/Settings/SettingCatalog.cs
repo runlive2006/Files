@@ -193,6 +193,14 @@ public static class SettingCatalog
         },
         new()
         {
+            Key = "View.ShowDetailsPane",
+            Group = "视图",
+            DisplayName = "显示详情窗格",
+            Description = "在窗口底部显示选中项的信息。",
+            Kind = SettingKind.Boolean,
+        },
+        new()
+        {
             Key = "View.RowHeight",
             Group = "视图",
             DisplayName = "行高",

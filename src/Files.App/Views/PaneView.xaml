@@ -7,6 +7,25 @@
              mc:Ignorable="d">
 
     <UserControl.Resources>
+        <!-- 行高：只用 BasedOn 继承默认 ListViewItem 样式，仅覆盖 Padding。
+             注意：不得整体替换 ControlTemplate，否则会丢默认模板导致列表不渲染。 -->
+        <Style x:Key="RowCompact" TargetType="ListViewItem"
+               BasedOn="{StaticResource {x:Type ListViewItem}}">
+            <Setter Property="Padding" Value="2,0" />
+            <Setter Property="MinHeight" Value="18" />
+        </Style>
+
+        <Style x:Key="RowNormal" TargetType="ListViewItem"
+               BasedOn="{StaticResource {x:Type ListViewItem}}">
+            <Setter Property="Padding" Value="2,2" />
+            <Setter Property="MinHeight" Value="24" />
+        </Style>
+
+        <Style x:Key="RowComfortable" TargetType="ListViewItem"
+               BasedOn="{StaticResource {x:Type ListViewItem}}">
+            <Setter Property="Padding" Value="2,5" />
+            <Setter Property="MinHeight" Value="32" />
+        </Style>
         <!-- 缩略图视图的网格面板。内置 WrapPanel 不虚拟化，大目录性能受限（见 DEV-PLAN 已知限制） -->
         <ItemsPanelTemplate x:Key="ThumbnailsPanel">
             <WrapPanel />
