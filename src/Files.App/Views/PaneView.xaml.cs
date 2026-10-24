@@ -9,6 +9,7 @@ using System.Windows.Threading;
 using Files.App.ViewModels;
 using Files.Core.Models;
 using Files.Core.Services;
+using Files.Core.Services.Search;
 using Files.Interop;
 
 namespace Files.App.Views;
@@ -120,6 +121,8 @@ public partial class PaneView : UserControl
         ApplyViewMode(tab.ViewMode);
         AddressBox.Text = tab.AddressText.Length > 0 ? tab.AddressText : tab.CurrentPath;
         UpdateNavigationState();
+
+        SyncFilterBox();
 
         // 布局完成后恢复滚动位置与选择集
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, RestoreScrollAndSelection);
@@ -369,6 +372,208 @@ public partial class PaneView : UserControl
     /// <summary>让本栏的列表获得焦点。</summary>
     public void FocusList() => EntriesList.Focus();
 
+    // ---------- 筛选 ----------
+
+    private DispatcherTimer? _filterDebounce;
+
+    /// <summary>
+    /// 筛选输入变化：250ms 防抖后应用到当前标签。
+    /// </summary>
+    /// <remarks>
+    /// 防抖是必要的：每敲一个字符都全量筛选 10 万项会让输入明显卡顿。
+    /// 250ms 是"感觉即时"与"避免频繁重算"的折中。
+    /// </remarks>
+    private void OnFilterTextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_filterDebounce is null)
+        {
+            _filterDebounce = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(250),
+            };
+
+            _filterDebounce.Tick += (_, _) =>
+            {
+                _filterDebounce!.Stop();
+                ViewModel.ActiveTab.FilterText = FilterBox.Text;
+            };
+        }
+
+        _filterDebounce.Stop();
+        _filterDebounce.Start();
+    }
+
+    /// <summary>Esc 清空筛选。</summary>
+    private void OnFilterKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            _ = StartRecursiveSearchAsync();
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key != Key.Escape)
+        {
+            return;
+        }
+
+        FilterBox.Text = string.Empty;
+        ViewModel.ActiveTab.FilterText = string.Empty;
+        EntriesList.Focus();
+        e.Handled = true;
+    }
+
+    /// <summary>切换标签时同步筛选框内容。</summary>
+    private void SyncFilterBox()
+    {
+        string text = ViewModel.ActiveTab.FilterText;
+        if (FilterBox.Text != text)
+        {
+            FilterBox.Text = text;
+        }
+    }
+    // ---------- 递归搜索 ----------
+
+    private readonly RecursiveSearcher _searcher = new();
+    private CancellationTokenSource? _searchCts;
+    private bool _isSearching;
+    private string? _searchRootPath;
+
+    /// <summary>
+    /// 回车：若勾选"含子目录"则开始递归搜索，否则只是筛选（已在输入时生效）。
+    /// </summary>
+    /// <remarks>
+    /// 递归搜索<b>不在打字时触发</b>（SEARCH.md §3.1）：
+    /// 边输入边扫盘会让磁盘狂转、结果闪烁，且用户无法控制。
+    /// </remarks>
+    private void OnRecursiveSearchChanged(object sender, RoutedEventArgs e)
+    {
+        // 勾选状态变化不立即搜索，等用户按回车
+    }
+
+    private async Task StartRecursiveSearchAsync()
+    {
+        if (!RecursiveSearchBox.IsChecked.GetValueOrDefault())
+        {
+            return;
+        }
+
+        string query = FilterBox.Text;
+
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return;
+        }
+
+        // 取消上一次搜索
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+        _searchCts = new CancellationTokenSource();
+
+        CancellationToken token = _searchCts.Token;
+        string rootPath = ViewModel.ActiveTab.CurrentPath;
+        _searchRootPath = rootPath;
+        _isSearching = true;
+
+        ShowSearchStatus($"正在搜索「{query}」，范围：{rootPath}（含子目录）");
+
+        try
+        {
+            var progress = new Progress<SearchProgress>(p =>
+            {
+                if (!_isSearching)
+                {
+                    return;
+                }
+
+                ShowSearchStatus(
+                    $"正在搜索「{query}」，范围：{rootPath}（含子目录）　已找到 {p.FoundCount} 项，已扫描 {p.ScannedCount} 项");
+            });
+
+            SearchResult result = await Task.Run(
+                () => _searcher.Search(rootPath, SearchQueryParser.Parse(query), includeHidden: false, progress, token),
+                token);
+
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            _isSearching = false;
+
+            // 搜索结果替换列表内容：需要完整路径列，故用专门的展示
+            ApplySearchResult(result, rootPath, query);
+        }
+        catch (OperationCanceledException)
+        {
+            // 用户取消，正常路径
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ShowSearchStatus($"搜索失败：{ex.Message}");
+        }
+        finally
+        {
+            if (!_isSearching)
+            {
+                CancelSearchButton.Visibility = Visibility.Collapsed;
+            }
+        }
+    }
+
+    private void ApplySearchResult(SearchResult result, string rootPath, string query)
+    {
+        string summary = $"搜索「{query}」：{result.Count} 项（来自 {rootPath}）";
+
+        if (result.SkippedDirectoryCount > 0)
+        {
+            summary += $"　跳过 {result.SkippedDirectoryCount} 个无权限目录";
+        }
+
+        if (result.Truncated)
+        {
+            summary += $"　已达 {RecursiveSearcher.MaxResults:N0} 项上限，请细化条件";
+        }
+
+        ShowSearchStatus(summary, canCancel: false);
+
+        // 搜索结果跨目录，使用专门的搜索结果行（携带各自完整路径）
+        var rows = new List<SearchHitRow>(result.Count);
+
+        foreach (SearchHit hit in result.Hits)
+        {
+            rows.Add(new SearchHitRow(
+                hit.Entry.Name,
+                hit.FullPath,
+                hit.Entry.IsDirectory,
+                hit.Entry.SizeBytes,
+                hit.Entry.LastModified));
+        }
+
+        ViewModel.ActiveTab.ApplySearchResults(rows, rootPath, query);
+    }
+
+    private void ShowSearchStatus(string text, bool canCancel = true)
+    {
+        SearchStatusText.Text = text;
+        SearchStatusBar.Visibility = Visibility.Visible;
+        CancelSearchButton.Visibility = canCancel ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void HideSearchStatus()
+    {
+        SearchStatusBar.Visibility = Visibility.Collapsed;
+        _isSearching = false;
+        _searchRootPath = null;
+    }
+
+    private void OnCancelSearchClick(object sender, RoutedEventArgs e)
+    {
+        _searchCts?.Cancel();
+        HideSearchStatus();
+        ViewModel.SetStatus("已取消搜索");
+    }
     // ---------- 导航 ----------
 
     private void UpdateNavigationState()

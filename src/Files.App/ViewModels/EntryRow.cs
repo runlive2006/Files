@@ -71,6 +71,27 @@ public sealed record EntryRow(
             entry.LastModified);
     }
 
+    /// <summary>从搜索命中构造行（路径来自命中本身，不推导）。</summary>
+    public static EntryRow FromSearchHit(SearchHitRow hit)
+    {
+        var entry = new FileSystemEntry(
+            hit.Name,
+            hit.IsDirectory,
+            hit.SizeBytes,
+            hit.LastModifiedUtc);
+
+        return new EntryRow(
+            hit.Name,
+            hit.FullPath,
+            hit.IsDirectory,
+            DescribeKind(entry),
+            hit.IsDirectory ? string.Empty : FormatSize(hit.SizeBytes),
+            hit.LastModifiedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture),
+            IconBrushes.For(entry),
+            null,
+            hit.SizeBytes,
+            hit.LastModifiedUtc);
+    }
     private static string DescribeKind(FileSystemEntry entry)
     {
         if (entry.IsDirectory)

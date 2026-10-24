@@ -97,6 +97,7 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="200" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
@@ -114,7 +115,20 @@
                          LostKeyboardFocus="OnAddressLostFocus"
                          ToolTip="输入路径后回车（支持 %USERPROFILE% 等环境变量）" />
 
-                <Button x:Name="NewTabButton" Grid.Column="4" Content="＋" Click="OnNewTabClick"
+                <DockPanel Grid.Column="4" Margin="4,0,0,0" LastChildFill="True">
+                    <CheckBox x:Name="RecursiveSearchBox" DockPanel.Dock="Right"
+                              Content="含子目录" Margin="4,0,0,0" VerticalAlignment="Center"
+                              ToolTip="勾选后按 Enter 递归搜索子目录"
+                              Checked="OnRecursiveSearchChanged"
+                              Unchecked="OnRecursiveSearchChanged" />
+                    <TextBox x:Name="FilterBox" Padding="4,2"
+                             VerticalContentAlignment="Center"
+                             TextChanged="OnFilterTextChanged"
+                             KeyDown="OnFilterKeyDown"
+                             ToolTip="筛选当前目录；支持 ext: kind: size: datemodified:。回车开始递归搜索" />
+                </DockPanel>
+
+                <Button x:Name="NewTabButton" Grid.Column="5" Content="＋" Click="OnNewTabClick"
                         ToolTip="新建标签 (Ctrl+T)" Padding="6,1" MinWidth="26" Margin="4,0,0,0" />
             </Grid>
 
@@ -129,6 +143,18 @@
                 </ItemsControl.ItemsPanel>
             </ItemsControl>
 
+            <!-- 递归搜索状态条：仅搜索中/有结果时显示 -->
+            <Border x:Name="SearchStatusBar" DockPanel.Dock="Top" Margin="2,2,2,0"
+                    Background="#FFF8E1" BorderBrush="#FFE082" BorderThickness="1"
+                    Padding="8,4" Visibility="Collapsed">
+                <DockPanel>
+                    <Button x:Name="CancelSearchButton" DockPanel.Dock="Right"
+                            Content="取消" Padding="10,2" Margin="8,0,0,0"
+                            Click="OnCancelSearchClick" />
+                    <TextBlock x:Name="SearchStatusText" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" />
+                </DockPanel>
+            </Border>
             <Grid>
                 <ListView x:Name="EntriesList" Margin="2"
                           AllowDrop="True"

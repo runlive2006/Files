@@ -5,6 +5,7 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using Files.Core.Models;
 using Files.Core.Services;
+using Files.Core.Services.Search;
 
 namespace Files.App.ViewModels;
 
@@ -28,6 +29,8 @@ public sealed class TabViewModel : INotifyPropertyChanged, IDisposable
     private IconProvider _icons;
 
     private DirectoryListing? _listing;
+    private DirectoryListing? _filteredListing;
+    private string _filterText = string.Empty;
     private string _addressText = string.Empty;
     private string _statusText = "就绪";
     private string _title = string.Empty;
@@ -144,6 +147,71 @@ public sealed class TabViewModel : INotifyPropertyChanged, IDisposable
         ArgumentNullException.ThrowIfNull(icons);
         _icons = icons;
     }
+    /// <summary>筛选文本（空表示不筛选）。</summary>
+    public string FilterText
+    {
+        get => _filterText;
+        set
+        {
+            if (_filterText == value)
+            {
+                return;
+            }
+
+            _filterText = value;
+            OnPropertyChanged(nameof(FilterText));
+            ApplyFilter();
+        }
+    }
+
+    /// <summary>
+    /// 重新应用筛选（在内存中过滤，不重新枚举目录）。
+    /// </summary>
+    /// <remarks>
+    /// 筛选与排序都基于 <see cref="_listing"/>（完整结果），
+    /// 这样清空筛选能立刻恢复全部条目，不需要重读磁盘。
+    /// </remarks>
+    public void ApplyFilter()
+    {
+        if (_listing is null)
+        {
+            return;
+        }
+
+        DirectoryListing source = _listing;
+
+        if (!string.IsNullOrWhiteSpace(_filterText))
+        {
+            SearchQuery query = SearchQueryParser.Parse(_filterText);
+            source = EntryFilter.Apply(source, query);
+        }
+
+        _filteredListing = EntrySorter.Sort(source, SortColumn, SortDescending);
+        RebuildRows(_filteredListing, reportFilter: true);
+    }
+    /// <summary>
+    /// 用递归搜索的结果替换列表内容。
+    /// </summary>
+    /// <remarks>
+    /// 搜索结果跨越多个目录，不能复用 <see cref="DirectoryListing"/>
+    /// （它假设所有条目共享同一父路径）。这里直接构造行，路径按实际完整路径传入。
+    /// </remarks>
+    /// <param name="results">搜索结果（含相对路径信息由 <paramref name="rootPath"/> 推导）。</param>
+    /// <param name="rootPath">搜索根目录。</param>
+    /// <param name="queryText">查询文本（仅用于状态显示）。</param>
+    public void ApplySearchResults(IReadOnlyList<SearchHitRow> results, string rootPath, string queryText)
+    {
+        ArgumentNullException.ThrowIfNull(results);
+
+        Rows.Clear();
+
+        foreach (SearchHitRow hit in results)
+        {
+            Rows.Add(EntryRow.FromSearchHit(hit));
+        }
+
+        StatusText = $"搜索「{queryText}」：{results.Count:N0} 项";
+    }
     /// <summary>设置状态文本。</summary>
     public void SetStatus(string message) => StatusText = message;
 
@@ -171,6 +239,9 @@ public sealed class TabViewModel : INotifyPropertyChanged, IDisposable
             }
 
             _listing = listing;
+            _filteredListing = null;
+            _filterText = string.Empty;
+            OnPropertyChanged(nameof(FilterText));
             State.Path = listing.DirectoryPath;
 
             if (recordHistory)
@@ -234,8 +305,8 @@ public sealed class TabViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
-        _listing = EntrySorter.Sort(_listing, column, descending);
-        RebuildRows(_listing);
+        // 排序作用于完整结果（_listing），筛选条件保持生效
+        ApplyFilter();
     }
 
     /// <summary>应用视图模式。</summary>
@@ -271,7 +342,7 @@ public sealed class TabViewModel : INotifyPropertyChanged, IDisposable
     /// <inheritdoc />
     public void Dispose() => _runner.Dispose();
 
-    private void RebuildRows(DirectoryListing listing)
+    private void RebuildRows(DirectoryListing listing, bool reportFilter = false)
     {
         long start = Stopwatch.GetTimestamp();
 
@@ -282,7 +353,16 @@ public sealed class TabViewModel : INotifyPropertyChanged, IDisposable
         }
 
         double elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-        StatusText = $"{listing.Count:N0} 个项目 · 读取 {elapsedMs:F1}ms";
+
+        if (reportFilter && _listing is not null && listing.Count != _listing.Count)
+        {
+            // 筛选生效时同时显示"匹配数/总数"，避免用户以为文件丢了
+            StatusText = $"{listing.Count:N0} / {_listing.Count:N0} 项匹配 · 读取 {elapsedMs:F1}ms";
+        }
+        else
+        {
+            StatusText = $"{listing.Count:N0} 个项目 · 读取 {elapsedMs:F1}ms";
+        }
     }
 
     private void NotifyNavigationState()
