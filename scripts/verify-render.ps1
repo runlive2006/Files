@@ -52,15 +52,17 @@ try {
         [System.Windows.Automation.TreeScope]::Children,
         [System.Windows.Automation.Condition]::TrueCondition)
 
-    Write-Output ("VISIBLE_ITEM_COUNT=" + $items.Count)
-
+    # GridView 的表头在 UIA 中是一个空名子节点，统计时排除，否则计数会多 1
     $names = @()
-    for ($i = 0; $i -lt [Math]::Min(5, $items.Count); $i++) {
-        $names += $items[$i].Current.Name
+    foreach ($it in $items) {
+        $n = $it.Current.Name
+        if (-not [string]::IsNullOrWhiteSpace($n)) { $names += $n }
     }
-    Write-Output ("FIRST_ITEMS=" + ($names -join ' | '))
 
-    if ($items.Count -gt 0) {
+    Write-Output ("VISIBLE_ITEM_COUNT=" + $names.Count)
+    Write-Output ("FIRST_ITEMS=" + (($names | Select-Object -First 5) -join ' | '))
+
+    if ($names.Count -gt 0) {
         Write-Output "RESULT=RENDERING_OK"
     }
     else {

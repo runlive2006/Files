@@ -12,12 +12,21 @@ namespace Files.Interop;
 /// </remarks>
 public sealed class Win32DirectoryLister : IDirectoryLister
 {
+    /// <summary>是否包含隐藏项。</summary>
+    public bool IncludeHidden { get; set; }
+
     /// <inheritdoc />
     public DirectoryListing List(string directoryPath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directoryPath);
 
         FileEntry[] raw = Win32DirectoryEnumerator.ReadAll(directoryPath);
+
+        // 不包含隐藏项时在内存中过滤：属性已在枚举阶段拿到，无需二次访问磁盘
+        if (!IncludeHidden)
+        {
+            raw = [.. raw.Where(item => !item.IsHidden)];
+        }
 
         var entries = new FileSystemEntry[raw.Length];
         for (int i = 0; i < raw.Length; i++)
@@ -27,7 +36,8 @@ public sealed class Win32DirectoryLister : IDirectoryLister
                 item.Name,
                 item.IsDirectory,
                 item.Size,
-                item.LastWriteUtc);
+                item.LastWriteUtc,
+                item.IsHidden);
         }
 
         Array.Sort(entries, static (left, right) =>

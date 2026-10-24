@@ -15,12 +15,18 @@ namespace Files.Core.Models;
 public readonly struct FileSystemEntry
 {
     /// <summary>创建条目。</summary>
-    public FileSystemEntry(string name, bool isDirectory, long sizeBytes, DateTimeOffset lastModified)
+    public FileSystemEntry(
+        string name,
+        bool isDirectory,
+        long sizeBytes,
+        DateTimeOffset lastModified,
+        bool isHidden = false)
     {
         Name = name;
         IsDirectory = isDirectory;
         SizeBytes = sizeBytes;
         LastModified = lastModified;
+        IsHidden = isHidden;
     }
 
     /// <summary>条目在所在目录中的显示名称。</summary>
@@ -34,6 +40,17 @@ public readonly struct FileSystemEntry
 
     /// <summary>最后修改时间（UTC）。</summary>
     public DateTimeOffset LastModified { get; }
+
+    /// <summary>
+    /// 是否为隐藏项（含系统文件）。
+    /// </summary>
+    /// <remarks>
+    /// 枚举阶段就记录该标记，这样"显示隐藏文件"的切换只需在内存中过滤，
+    /// 而不必为了拿到属性而二次访问磁盘。
+    /// 注意：这与设计文档 SETTINGS §5.6 的 C 档描述一致 ——
+    /// 切换开关仍需重枚举一次，因为默认情况下隐藏项根本没被列出来。
+    /// </remarks>
+    public bool IsHidden { get; }
 
     /// <summary>扩展名（含点），文件夹为空字符串。</summary>
     /// <remarks>每次访问都会计算，不要放进排序比较器里逐次调用。</remarks>

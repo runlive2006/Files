@@ -27,6 +27,9 @@ public interface IDirectoryLister
 /// </remarks>
 public sealed class FileSystemDirectoryLister : IDirectoryLister
 {
+    /// <summary>是否包含隐藏项。</summary>
+    public bool IncludeHidden { get; set; }
+
     /// <inheritdoc />
     public DirectoryListing List(string directoryPath)
     {
@@ -41,7 +44,14 @@ public sealed class FileSystemDirectoryLister : IDirectoryLister
         var entries = new List<FileSystemEntry>();
         foreach (var info in directory.EnumerateFileSystemInfos())
         {
-            entries.Add(ToEntry(info));
+            FileSystemEntry entry = ToEntry(info);
+
+            if (!IncludeHidden && entry.IsHidden)
+            {
+                continue;
+            }
+
+            entries.Add(entry);
         }
 
         entries.Sort(EntryOrdering.FoldersFirstByName);
@@ -55,12 +65,14 @@ public sealed class FileSystemDirectoryLister : IDirectoryLister
             dir.Name,
             isDirectory: true,
             sizeBytes: 0,
-            lastModified: dir.LastWriteTimeUtc),
+            lastModified: dir.LastWriteTimeUtc,
+            isHidden: (dir.Attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0),
         FileInfo file => new FileSystemEntry(
             file.Name,
             isDirectory: false,
             sizeBytes: file.Length,
-            lastModified: file.LastWriteTimeUtc),
+            lastModified: file.LastWriteTimeUtc,
+            isHidden: (file.Attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0),
         _ => throw new NotSupportedException($"不支持的条目类型：{info.GetType().Name}"),
     };
 }

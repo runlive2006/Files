@@ -108,7 +108,7 @@ public sealed class Win32DirectoryListerTests
     }
 
     [TestMethod]
-    public void List_HiddenFile_IsIncluded()
+    public void List_HiddenFile_IsExcludedByDefault()
     {
         string hidden = Path.Combine(_root, "hidden.txt");
         File.WriteAllText(hidden, "x");
@@ -116,7 +116,8 @@ public sealed class Win32DirectoryListerTests
 
         DirectoryListing listing = new Win32DirectoryLister().List(_root);
 
-        Assert.IsTrue(listing.Entries.Any(e => e.Name == "hidden.txt"));
+        // 默认不显示隐藏项，与资源管理器一致；需要显示时由设置打开 IncludeHidden
+        Assert.IsFalse(listing.Entries.Any(e => e.Name == "hidden.txt"));
     }
 
     [TestMethod]

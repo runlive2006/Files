@@ -35,4 +35,13 @@ public readonly struct FileEntry
     /// 造成重复枚举甚至无限递归（PRD §5.4）。
     /// </remarks>
     public bool IsReparsePoint => (Attributes & NativeMethods.FileAttributeReparsePoint) != 0;
+
+    /// <summary>是否为隐藏项。</summary>
+    /// <remarks>
+    /// 系统文件也一并视为隐藏：资源管理器的「显示隐藏文件」默认同时显示两者，
+    /// 分开处理会让用户以为开关失效。
+    /// </remarks>
+    public bool IsHidden =>
+        (Attributes & NativeMethods.FileAttributeHidden) != 0
+        || (Attributes & NativeMethods.FileAttributeSystem) != 0;
 }

@@ -29,6 +29,8 @@ internal static class NativeMethods
     internal const uint FindFirstExLargeFetch = 0x00000002;
 
     internal const uint FileAttributeDirectory = 0x00000010;
+    internal const uint FileAttributeHidden = 0x00000002;
+    internal const uint FileAttributeSystem = 0x00000004;
     internal const uint FileAttributeReparsePoint = 0x00000400;
     internal const uint FileAttributeDevice = 0x00000040;
 

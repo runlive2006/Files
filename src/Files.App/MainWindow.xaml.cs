@@ -24,7 +24,7 @@ namespace Files.App;
 /// </remarks>
 public partial class MainWindow : Window
 {
-    private readonly IDirectoryLister _lister = new Win32DirectoryLister();
+    private readonly Win32DirectoryLister _lister = new();
     private IconProvider _icons = new(useSystemIcons: true);
     private readonly Dictionary<PaneState, PaneViewModel> _viewModels = [];
     private readonly FrameTimer _frameTimer = new();
@@ -50,9 +50,10 @@ public partial class MainWindow : Window
         _settings.Load();
 
         // 图标开关先于任何栏创建，避免先建行再用错图标
-        _icons = new IconProvider(_settings.Current.UseSystemIcons);
+        _icons = new IconProvider(useSystemIcons: true);
+        _lister.IncludeHidden = _settings.Current.View.ShowHidden;
 
-        MenuUseSystemIcons.IsChecked = _settings.Current.UseSystemIcons;
+        MenuUseSystemIcons.IsChecked = true;
 
         _hudTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -465,6 +466,14 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Ctrl+, 打开设置（与主流应用一致）
+        if (modifiers == ModifierKeys.Control && e.Key == Key.OemComma)
+        {
+            OpenSettings();
+            e.Handled = true;
+            return;
+        }
+
         // 标签：Ctrl+Tab / Ctrl+Shift+Tab 切换，Ctrl+Shift+T 恢复最近关闭
         if (modifiers.HasFlag(ModifierKeys.Control) && e.Key == Key.Tab)
         {
@@ -534,7 +543,7 @@ public partial class MainWindow : Window
     private void OnToggleSystemIconsClick(object sender, RoutedEventArgs e)
     {
         bool enabled = MenuUseSystemIcons.IsChecked;
-        _settings.Current.UseSystemIcons = enabled;
+        // 系统图标开关已迁移到设置窗口（后续接入）；此处仅即时生效
 
         // 图标在行构造时确定，切换后必须整体重建
         _icons = new IconProvider(enabled);
@@ -548,6 +557,56 @@ public partial class MainWindow : Window
         StatusText.Text = enabled ? "已启用系统图标" : "已改用占位图标";
     }
 
+    // ---------- 设置窗口 ----------
+
+    private void OnOpenSettingsClick(object sender, RoutedEventArgs e) => OpenSettings();
+
+    private void OpenSettings()
+    {
+        var window = new Views.SettingsWindow(_settings) { Owner = this };
+        window.SettingChanged += OnSettingChanged;
+        window.ShowDialog();
+    }
+
+    /// <summary>
+    /// 应用某项设置变更。
+    /// </summary>
+    /// <remarks>
+    /// 按代价分档（设计文档 SETTINGS §5.6）：
+    /// 视图类改动立即作用到所有栏；需要重新枚举的项走后台刷新，期间界面保持可用。
+    /// </remarks>
+    private void OnSettingChanged(object? sender, string key)
+    {
+        switch (key)
+        {
+            case "View.ShowHidden":
+                // C 档：隐藏属性只有枚举时才知道，必须重读目录
+                _lister.IncludeHidden = _settings.Current.View.ShowHidden;
+                _ = RefreshAllPanesAsync();
+                StatusText.Text = "已更新隐藏文件显示，正在刷新…";
+                break;
+
+            case "View.ShowExtensions":
+            case "View.IconSize":
+            case "View.RowHeight":
+            case "View.AlternateRowColor":
+            case "View.ShowGridLines":
+            case "View.FolderFirst":
+            case "View.ShowStatusBar":
+            case "Perf.ShowPerfHud":
+                // A/B 档：只需重设视图参数，不重读目录
+                _ = RefreshAllPanesAsync();
+                break;
+
+            case "View.ThumbnailSize":
+                _ = RefreshAllPanesAsync();
+                break;
+
+            default:
+                // 其余项在下次启动或下次操作时生效，无需即时刷新
+                break;
+        }
+    }
     // ---------- 性能 HUD ----------
 
     private void OnHudTick(object? sender, EventArgs e)
@@ -598,9 +657,7 @@ public partial class MainWindow : Window
             settings.SplitRatios.Add(split.FirstRatio);
         }
 
-        settings.LastPath = _paneViews.Count > 0
-            ? _paneViews[_focusedIndex].ViewModel.CurrentPath
-            : string.Empty;
+        // 上次路径已由 Panes[0].Path 承载，不再单独保存
     }
 
     /// <summary>从布局树反推布局模式（用于持久化）。</summary>

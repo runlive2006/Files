@@ -40,6 +40,8 @@
             </MenuItem>
 
             <MenuItem Header="设置" Padding="10,4">
+                <MenuItem Header="打开设置…" Click="OnOpenSettingsClick" InputGestureText="Ctrl+," />
+                <Separator />
                 <MenuItem x:Name="MenuUseSystemIcons" Header="使用系统图标" IsCheckable="True"
                           IsChecked="True" Click="OnToggleSystemIconsClick" />
             </MenuItem>
