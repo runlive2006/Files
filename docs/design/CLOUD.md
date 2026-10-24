@@ -108,7 +108,7 @@ if (isDirectory && !isReparse) { pending.Enqueue(...); }
 
 ---
 
-## 5. 未实现 / 待定
+## 5. 未实现 / 待定（按 DEV-PLAN 层级归类）
 
 | 项 | 说明 |
 | --- | --- |

@@ -284,15 +284,36 @@ public sealed class AppSettings
 - 端到端：写 `ShowHidden=false` 启动 → 列表只显示 `visible.txt`（1 项）；
   改为 `true` → 显示 `hidden.txt` + `visible.txt`（2 项）。证明设置真正驱动了枚举过滤
 
-### 9.3 尚未实现
+### 9.3 已接线（行为生效）
 
-| 项 | 原因 |
+| 设置项 | 生效方式 |
 | --- | --- |
-| 设置搜索的 UI 细节 | 已支持按名称/说明过滤，但未做高亮 |
+| `View.ShowHidden` | 驱动枚举过滤（`Win32DirectoryEnumerator.IncludeHidden`） |
+| `View.ShowExtensions` | 列表名称显示 |
+| `View.ShowStatusBar` | 状态栏可见性 |
+| `View.ShowDetailsPane` | 底部详情窗格 |
+| `View.ShowNavigationPane` | 左侧导航树 |
+| `View.NavigationPaneWidth` | 导航树宽度，拖动分隔条回写 |
+| `View.RowHeight` | 列表行高（紧凑/标准/宽松） |
+| `View.UseSystemIcons` | 真实系统图标 vs 彩色方块 |
+| 窗口几何（左/上/宽/高/最大化） | 启动时恢复，含跨屏可见性校验 |
+| 布局模式与各栏路径/视图模式/分隔条比例 | 启动时恢复 |
+
+### 9.4 尚未接线（能存不能用）
+
+| 项 | 影响 |
+| --- | --- |
+| `FileOps.ConfirmDelete` / `DeleteToRecycleBin` | 删除前确认与回收站选择尚未接到操作路径 |
+| `View.IconSize` | 图标尺寸未生效 |
+| `View.AlternateRowColor` / `ShowGridLines` | 外观未生效 |
+| `Startup.SingleInstance` | 单实例与路径转交未实现 |
+| `Startup.StartupMode` | 启动时未按它选择初始路径 |
+| `Panes.ShowTabStripAlways` / `CloseWindowWithLastTab` | 未生效 |
+| `Perf.IconCacheSize` / `ShowPerfHud` | 未接到图标缓存与 HUD |
+| `Perf.EnableThumbnailDecoding` | 只读展示，真实缩略图解码未实现 |
 | 导入 / 导出 `.filesconfig` | 未做 |
-| 单实例与路径转交 | 未做（`General.SingleInstance` 已可保存，但尚无行为） |
-| 启动行为（`StartupMode`） | 已可保存，启动时尚未按它选择初始路径 |
+| 设置搜索高亮 | 已支持过滤，未做高亮 |
 | 快捷键自定义 | 按设计不属于本轮 |
-| `Perf.EnableThumbnailDecoding` | 只读展示，功能未实现 |
 
 > 这些项的设置已能读写与持久化，只是行为尚未接线。逐项接入即可，不需要再改数据模型。
+> 接线顺序见 [DEV-PLAN.md](../DEV-PLAN.md) §3 第二波。
