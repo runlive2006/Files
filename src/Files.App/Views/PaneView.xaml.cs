@@ -699,12 +699,17 @@ public partial class PaneView : UserControl
                 // 网格布局：换成可虚拟化的换行面板，否则大目录会一次性建满容器。
                 // 模板定义在 XAML 中，运行时构造的模板不会被正确应用。
                 EntriesList.ItemsPanel = _thumbnailsPanel;
+
+                // 关键：CanContentScroll 必须为 true，ScrollViewer 才会使用面板的
+                // IScrollInfo（按项滚动）。为 false 时按像素滚动，虚拟化不生效。
+                ScrollViewer.SetCanContentScroll(EntriesList, true);
                 break;
 
             default:
                 EntriesList.View = _detailsView;
                 EntriesList.ItemTemplate = null;
                 RestoreDefaultItemsPanel();
+                ScrollViewer.SetCanContentScroll(EntriesList, true);
                 break;
         }
     }
