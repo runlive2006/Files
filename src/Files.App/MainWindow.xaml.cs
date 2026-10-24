@@ -563,9 +563,31 @@ public partial class MainWindow : Window
 
     private void OpenSettings()
     {
-        var window = new Views.SettingsWindow(_settings) { Owner = this };
-        window.SettingChanged += OnSettingChanged;
-        window.ShowDialog();
+        try
+        {
+            var window = new Views.SettingsWindow(_settings) { Owner = this };
+            window.SettingChanged += OnSettingChanged;
+            window.ShowDialog();
+        }
+        catch (Exception ex)
+        {
+            // 设置窗口构造/显示失败时不能静默：写入日志并在状态栏提示
+            try
+            {
+                string dir = AppPaths.Current?.LogDirectory
+                    ?? Path.Combine(AppContext.BaseDirectory, "data", "logs");
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(
+                    Path.Combine(dir, "settings-error.log"),
+                    DateTime.Now.ToString("O") + Environment.NewLine + ex);
+            }
+            catch (Exception logEx) when (logEx is IOException or UnauthorizedAccessException)
+            {
+                // 日志都写不了时只能忽略
+            }
+
+            StatusText.Text = $"无法打开设置：{ex.Message}";
+        }
     }
 
     /// <summary>

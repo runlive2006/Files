@@ -10,10 +10,16 @@
 | --- | --- |
 | 操作系统 | Windows 10 22H2+ / Windows 11，**仅 x64** |
 | .NET SDK | **10.x**（项目 `global.json` 要求 10.0.100，允许向上滚动） |
+| PowerShell | **7.x（pwsh）推荐**。仓库脚本使用 PS7 语法，Windows PowerShell 5.1 下部分写法无法解析 |
 | 磁盘 | 首次构建约 500 MB（SDK 缓存 + 中间产物） |
 | 网络 | 首次构建需要联网还原 NuGet 依赖 |
 
 安装 SDK：<https://dotnet.microsoft.com/download/dotnet/10.0>
+
+安装 PowerShell 7：<https://github.com/PowerShell/PowerShell/releases>
+
+> `build.cmd` 会自动检测并优先使用 `pwsh`；没有时回退到 `powershell.exe` 并给出提示。
+> 直接调用 `.ps1` 脚本时请用 `pwsh`。
 
 验证安装：
 
@@ -40,7 +46,7 @@ dotnet --version
 ### 方式 C：自动化 / CI
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build.ps1
+pwsh -NoProfile -File scripts\build.ps1
 ```
 
 > `build.cmd` 结束时会暂停等待按键，**CI 里请直接调用 `build.ps1`**。

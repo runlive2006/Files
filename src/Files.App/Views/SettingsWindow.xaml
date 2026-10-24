@@ -8,7 +8,7 @@
         Title="设置" Height="560" Width="820"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
-        Icon="/Assets/Files.ico">
+        Icon="/Files;component/Assets/Files.ico">
 
     <Window.Resources>
         <!--

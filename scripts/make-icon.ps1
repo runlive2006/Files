@@ -1,5 +1,5 @@
 # 生成应用图标（原创绘制，无第三方素材，无版权问题）
-# 用法：powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\make-icon.ps1
+# 用法：pwsh -NoProfile -File scripts\make-icon.ps1
 #
 # 图形含义：蓝色圆角方块 + 两个白色分栏，直观表达"多栏文件管理器"。
 
