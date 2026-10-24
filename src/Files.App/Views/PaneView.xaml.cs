@@ -25,7 +25,7 @@ public partial class PaneView : UserControl
 {
     private static readonly Brush FocusBrush = CreateFrozen(Color.FromRgb(0x00, 0x78, 0xD4));
 
-    private readonly IFileOperator _fileOperator = new ShellFileOperator();
+    private readonly IFileOperator _fileOperator = new FileOperationOperator();
     private GridView? _detailsView;
     private DataTemplate? _listTemplate;
     private DataTemplate? _thumbnailTemplate;
