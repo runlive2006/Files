@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Files.App.ViewModels;
@@ -30,6 +31,7 @@ public partial class PaneView : UserControl
     private DataTemplate? _listTemplate;
     private DataTemplate? _thumbnailTemplate;
     private ItemsPanelTemplate? _thumbnailsPanel;
+    private GridView? _searchResultView;
     private IconProvider? _icons;
     private TabViewModel? _boundTab;
     private bool _switchingTab;
@@ -63,6 +65,7 @@ public partial class PaneView : UserControl
         _listTemplate = (DataTemplate)FindResource("ListTemplate");
         _thumbnailTemplate = (DataTemplate)FindResource("ThumbnailTemplate");
         _thumbnailsPanel = (ItemsPanelTemplate)FindResource("ThumbnailsPanel");
+        _searchResultView = (GridView)FindResource("SearchResultView");
 
         AddHandler(GridViewColumnHeader.ClickEvent, new RoutedEventHandler(OnColumnHeaderClick));
         EntriesList.PreviewMouseRightButtonDown += OnListRightButtonDown;
@@ -156,6 +159,10 @@ public partial class PaneView : UserControl
             case nameof(TabViewModel.CanGoBack):
             case nameof(TabViewModel.CanGoForward):
                 UpdateNavigationState();
+                break;
+
+            case nameof(TabViewModel.IsShowingSearchResults):
+                ApplyViewMode(ViewModel.ActiveTab.ViewMode);
                 break;
 
             case nameof(TabViewModel.Title):
@@ -580,6 +587,33 @@ public partial class PaneView : UserControl
         HideSearchStatus();
         ViewModel.SetStatus("已取消搜索");
     }
+    // ---------- 属性 ----------
+
+    /// <summary>
+    /// 显示系统原生属性对话框。
+    /// </summary>
+    /// <remarks>
+    /// 多选时打开第一个选中项的属性 —— 与资源管理器一致
+    /// （系统对话框一次只处理一个对象；批量属性需要自绘聚合页，不在本轮范围）。
+    /// </remarks>
+    private void OnPropertiesClick(object sender, RoutedEventArgs e)
+    {
+        IReadOnlyList<EntryRow> rows = SelectedRows;
+
+        if (rows.Count == 0)
+        {
+            // 无选中时打开当前目录的属性
+            string? directory = ViewModel.ActiveTab.CurrentPath;
+            ShellPropertiesDialog.Show(directory, Window.GetWindow(this) is { } w ? new WindowInteropHelper(w).Handle : IntPtr.Zero);
+            return;
+        }
+
+        IntPtr owner = Window.GetWindow(this) is { } window
+            ? new WindowInteropHelper(window).Handle
+            : IntPtr.Zero;
+
+        ShellPropertiesDialog.Show(rows[0].FullPath, owner);
+    }
     // ---------- 导航 ----------
 
     private void UpdateNavigationState()
@@ -706,7 +740,10 @@ public partial class PaneView : UserControl
                 break;
 
             default:
-                EntriesList.View = _detailsView;
+                // 搜索结果显示带「路径」列的专用 GridView
+                EntriesList.View = _boundTab?.IsShowingSearchResults == true
+                    ? _searchResultView
+                    : _detailsView;
                 EntriesList.ItemTemplate = null;
                 RestoreDefaultItemsPanel();
                 ScrollViewer.SetCanContentScroll(EntriesList, true);
@@ -1230,6 +1267,11 @@ public partial class PaneView : UserControl
         else if (e.Key == Key.F5)
         {
             _ = ViewModel.RefreshAsync();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Enter && modifiers == ModifierKeys.Alt)
+        {
+            OnPropertiesClick(this, new RoutedEventArgs());
             e.Handled = true;
         }
         else if (e.Key == Key.D && modifiers == ModifierKeys.Alt)

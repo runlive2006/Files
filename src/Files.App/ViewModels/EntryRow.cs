@@ -30,6 +30,27 @@ public sealed record EntryRow(
     DateTimeOffset LastModifiedUtc)
 {
     /// <summary>
+    /// 所在文件夹的完整路径（搜索结果列表的"路径"列用）。
+    /// </summary>
+    /// <remarks>
+    /// 由 <see cref="FullPath"/> 推导，不占构造参数：正常浏览时该列不显示，
+    /// 只有搜索结果的 GridView 才绑定它，因此无需为十万项多存一份字符串。
+    /// </remarks>
+    public string DirectoryText
+    {
+        get
+        {
+            try
+            {
+                return System.IO.Path.GetDirectoryName(FullPath) ?? string.Empty;
+            }
+            catch (ArgumentException)
+            {
+                return string.Empty;
+            }
+        }
+    }
+    /// <summary>
     /// 返回显示名称。
     /// </summary>
     /// <remarks>

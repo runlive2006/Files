@@ -13,5 +13,6 @@
   <Folder Name="/tools/">
     <Project Path="tools/OpCheck/OpCheck.csproj" />
     <Project Path="tools/PanelCheck/PanelCheck.csproj" />
+    <Project Path="tools/PropCheck/PropCheck.csproj" />
   </Folder>
 </Solution>

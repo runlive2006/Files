@@ -86,6 +86,33 @@
                 </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>
+        <!--
+            搜索结果专用 GridView：比常规视图多一列「路径」。
+            跨目录搜索时同名文件很多，没有路径列无法分辨。
+            单独定义而不复用常规 GridView，是为了正常浏览时不出现空列。
+        -->
+        <GridView x:Key="SearchResultView">
+            <GridViewColumn Header="名称" Width="260">
+                <GridViewColumn.CellTemplate>
+                    <DataTemplate>
+                        <StackPanel Orientation="Horizontal">
+                            <Grid Width="16" Height="16" Margin="0,0,6,0">
+                                <Border Background="{Binding IconBrush}" CornerRadius="2"
+                                        Visibility="{Binding PlaceholderVisibility}" />
+                                <Image Source="{Binding Icon}" Stretch="Uniform"
+                                       RenderOptions.BitmapScalingMode="HighQuality"
+                                       Visibility="{Binding IconVisibility}" />
+                            </Grid>
+                            <TextBlock Text="{Binding Name}" />
+                        </StackPanel>
+                    </DataTemplate>
+                </GridViewColumn.CellTemplate>
+            </GridViewColumn>
+            <GridViewColumn Header="路径" Width="380" DisplayMemberBinding="{Binding DirectoryText}" />
+            <GridViewColumn Header="类型" Width="90" DisplayMemberBinding="{Binding Kind}" />
+            <GridViewColumn Header="大小" Width="90" DisplayMemberBinding="{Binding SizeText}" />
+            <GridViewColumn Header="修改时间" Width="150" DisplayMemberBinding="{Binding LastModifiedText}" />
+        </GridView>
     </UserControl.Resources>
 
     <Border x:Name="FocusBorder" BorderThickness="2" BorderBrush="Transparent"
@@ -180,6 +207,8 @@
                             <MenuItem x:Name="MenuDelete" Header="删除" Click="OnDeleteClick" InputGestureText="Del" />
                             <MenuItem x:Name="MenuPermanentDelete" Header="永久删除"
                                       Click="OnPermanentDeleteClick" InputGestureText="Shift+Del" />
+                            <Separator />
+                            <MenuItem x:Name="MenuProperties" Header="属性" Click="OnPropertiesClick" InputGestureText="Alt+Enter" />
                             <Separator />
                             <MenuItem x:Name="MenuCopyPath" Header="复制路径" Click="OnCopyPathClick" />
                         </ContextMenu>

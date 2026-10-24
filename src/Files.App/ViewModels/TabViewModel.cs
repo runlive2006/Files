@@ -31,6 +31,7 @@ public sealed class TabViewModel : INotifyPropertyChanged, IDisposable
     private DirectoryListing? _listing;
     private DirectoryListing? _filteredListing;
     private string _filterText = string.Empty;
+    private bool _isShowingSearchResults;
     private string _addressText = string.Empty;
     private string _statusText = "就绪";
     private string _title = string.Empty;
@@ -189,6 +190,25 @@ public sealed class TabViewModel : INotifyPropertyChanged, IDisposable
         _filteredListing = EntrySorter.Sort(source, SortColumn, SortDescending);
         RebuildRows(_filteredListing, reportFilter: true);
     }
+    /// <summary>当前列表是否显示的是递归搜索结果（而非目录内容）。</summary>
+    /// <remarks>
+    /// 界面据此切换到带「路径」列的 GridView：搜索结果跨目录，
+    /// 没有路径列无法分辨同名文件。
+    /// </remarks>
+    public bool IsShowingSearchResults
+    {
+        get => _isShowingSearchResults;
+        private set
+        {
+            if (_isShowingSearchResults == value)
+            {
+                return;
+            }
+
+            _isShowingSearchResults = value;
+            OnPropertyChanged(nameof(IsShowingSearchResults));
+        }
+    }
     /// <summary>
     /// 用递归搜索的结果替换列表内容。
     /// </summary>
@@ -210,6 +230,7 @@ public sealed class TabViewModel : INotifyPropertyChanged, IDisposable
             Rows.Add(EntryRow.FromSearchHit(hit));
         }
 
+        IsShowingSearchResults = true;
         StatusText = $"搜索「{queryText}」：{results.Count:N0} 项";
     }
     /// <summary>设置状态文本。</summary>
@@ -241,6 +262,7 @@ public sealed class TabViewModel : INotifyPropertyChanged, IDisposable
             _listing = listing;
             _filteredListing = null;
             _filterText = string.Empty;
+            IsShowingSearchResults = false;
             OnPropertyChanged(nameof(FilterText));
             State.Path = listing.DirectoryPath;
 
