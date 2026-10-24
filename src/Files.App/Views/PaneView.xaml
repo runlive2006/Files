@@ -4,6 +4,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:local="clr-namespace:Files.App"
+             xmlns:views="clr-namespace:Files.App.Views"
              mc:Ignorable="d">
 
     <UserControl.Resources>
@@ -108,12 +109,7 @@
                 <Button x:Name="UpButton" Grid.Column="2" Content="↑" Click="OnUpClick"
                         ToolTip="上级目录 (Alt+↑)" Padding="6,1" MinWidth="28" Margin="0,0,4,0" />
 
-                <TextBox x:Name="AddressBox" Grid.Column="3" Padding="4,2"
-                         VerticalContentAlignment="Center"
-                         KeyDown="OnAddressKeyDown"
-                         GotKeyboardFocus="OnAddressGotFocus"
-                         LostKeyboardFocus="OnAddressLostFocus"
-                         ToolTip="输入路径后回车（支持 %USERPROFILE% 等环境变量）" />
+                <views:BreadcrumbBar x:Name="AddressBar" Grid.Column="3" Margin="0,0,2,0" />
 
                 <DockPanel Grid.Column="4" Margin="4,0,0,0" LastChildFill="True">
                     <CheckBox x:Name="RecursiveSearchBox" DockPanel.Dock="Right"

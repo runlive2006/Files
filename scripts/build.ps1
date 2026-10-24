@@ -207,7 +207,12 @@ if ($SkipTests) {
 else {
     Write-Step '运行单元测试'
 
-    & (Join-Path $PSScriptRoot 'test.ps1') -Configuration $Configuration -NoBuild
+    # 用独立进程调用 test.ps1：
+    # 直接 `& script.ps1` 时 $LASTEXITCODE 反映的是脚本内最后一条原生命令的退出码，
+    # 而非脚本自身的 exit N —— 测试进程偶发返回非 0 会被误判为"测试失败"。
+    $testScript = Join-Path $PSScriptRoot 'test.ps1'
+    & pwsh -NoProfile -File $testScript -Configuration $Configuration -NoBuild
+
     if ($LASTEXITCODE -ne 0) { Fail '单元测试未通过，已中止发布。' }
 
     Write-Ok '测试通过'

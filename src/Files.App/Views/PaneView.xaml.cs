@@ -72,6 +72,8 @@ public partial class PaneView : UserControl
         viewModel.TabsChanged += (_, _) => UpdateTabStripVisibility();
         viewModel.PropertyChanged += OnPanePropertyChanged;
 
+        AddressBar.NavigateRequested += OnBreadcrumbNavigateRequested;
+
         BindActiveTab();
         UpdateTabStripVisibility();
     }
@@ -80,7 +82,10 @@ public partial class PaneView : UserControl
     {
         if (ViewModel is not null)
         {
-            AddressBox.Text = ViewModel.ActiveTab.CurrentPath;
+            AddressBar.SetPath(
+                ViewModel.ActiveTab.CurrentPath,
+                BreadcrumbBuilder.GetRootDisplayName(ViewModel.ActiveTab.CurrentPath));
+
             RestoreScrollAndSelection();
         }
     }
@@ -119,7 +124,7 @@ public partial class PaneView : UserControl
         _switchingTab = false;
 
         ApplyViewMode(tab.ViewMode);
-        AddressBox.Text = tab.AddressText.Length > 0 ? tab.AddressText : tab.CurrentPath;
+        AddressBar.SetPath(tab.CurrentPath, BreadcrumbBuilder.GetRootDisplayName(tab.CurrentPath));
         UpdateNavigationState();
 
         SyncFilterBox();
@@ -137,18 +142,19 @@ public partial class PaneView : UserControl
 
         switch (e.PropertyName)
         {
-            case nameof(TabViewModel.AddressText):
-                // 地址栏获得焦点时不打断用户输入
-                if (!AddressBox.IsKeyboardFocusWithin)
+            case nameof(TabViewModel.CurrentPath):
+                // 编辑中不打断用户输入
+                if (!AddressBar.IsEditing)
                 {
-                    AddressBox.Text = ViewModel.ActiveTab.AddressText;
+                    string path = ViewModel.ActiveTab.CurrentPath;
+                    AddressBar.SetPath(path, BreadcrumbBuilder.GetRootDisplayName(path));
                 }
 
+                UpdateNavigationState();
                 break;
 
             case nameof(TabViewModel.CanGoBack):
             case nameof(TabViewModel.CanGoForward):
-            case nameof(TabViewModel.CurrentPath):
                 UpdateNavigationState();
                 break;
 
@@ -592,32 +598,17 @@ public partial class PaneView : UserControl
     private async void OnUpClick(object sender, RoutedEventArgs e) =>
         await ViewModel.ActiveTab.GoUpAsync();
 
-    private void OnAddressKeyDown(object sender, KeyEventArgs e)
+    /// <summary>面包屑点击或地址栏提交后导航到目标路径。</summary>
+    private void OnBreadcrumbNavigateRequested(object? sender, string path)
     {
-        if (e.Key == Key.Enter)
+        if (string.IsNullOrWhiteSpace(path))
         {
-            string target = PathUtility.Expand(AddressBox.Text);
-            if (string.IsNullOrWhiteSpace(target))
-            {
-                AddressBox.Text = ViewModel.ActiveTab.CurrentPath;
-                return;
-            }
+            return;
+        }
 
-            e.Handled = true;
-            _ = ViewModel.ActiveTab.NavigateAsync(target);
-        }
-        else if (e.Key == Key.Escape)
-        {
-            AddressBox.Text = ViewModel.ActiveTab.CurrentPath;
-            EntriesList.Focus();
-            e.Handled = true;
-        }
+        _ = ViewModel.ActiveTab.NavigateAsync(path);
     }
 
-    private void OnAddressGotFocus(object sender, KeyboardFocusChangedEventArgs e) => AddressBox.SelectAll();
-
-    private void OnAddressLostFocus(object sender, KeyboardFocusChangedEventArgs e) =>
-        AddressBox.Text = ViewModel.ActiveTab.CurrentPath;
 
     /// <summary>
     /// 双击条目：文件夹进入，文件用系统默认程序打开。
@@ -1234,6 +1225,11 @@ public partial class PaneView : UserControl
         else if (e.Key == Key.F5)
         {
             _ = ViewModel.RefreshAsync();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.D && modifiers == ModifierKeys.Alt)
+        {
+            AddressBar.BeginEdit();
             e.Handled = true;
         }
         else if (e.Key == Key.Back)
