@@ -7,12 +7,21 @@ C# (.NET 10 / WPF) 桌面文件管理器。
 | 文档 | 内容 |
 | --- | --- |
 | [docs/BUILD.md](docs/BUILD.md) | **构建说明**：前置条件、一键构建、参数、产物、常见问题 |
+| [docs/design/README.md](docs/design/README.md) | **功能设计索引**：现状与缺口、下一步实施顺序 |
 | [docs/PRD.md](docs/PRD.md) | 产品需求：定位、多栏+多标签模型、Win7 功能覆盖矩阵、性能预算、架构约束、风险 |
 | [docs/DEV-PLAN.md](docs/DEV-PLAN.md) | 开发计划：M1–M5 任务分解、估时、退出判据、测试矩阵、阻塞项 |
 | [docs/PERF-BASELINE.md](docs/PERF-BASELINE.md) | 性能基线实测：5 万/10 万项目录枚举数据与结论 |
 | [docs/DEPLOY.md](docs/DEPLOY.md) | 分发与运行：数据位置、SmartScreen、权限要求 |
 | [docs/USER-TEST.md](docs/USER-TEST.md) | 用户测试清单 |
 | [docs/adr/ADR-001](docs/adr/ADR-001-runtime-and-ui-framework.md) | 运行时与 UI 框架选型（含 Win7 兼容性事实核查）— 已接受 |
+
+### 功能设计（详细规格，未实现）
+
+| 文档 | 内容 |
+| --- | --- |
+| [SETTINGS.md](docs/design/SETTINGS.md) | 设置体系：30+ 项清单、设置窗口交互、单实例、schema 迁移 |
+| [NAVIGATION-AND-PANES.md](docs/design/NAVIGATION-AND-PANES.md) | 导航窗格（树）、详情窗格、预览窗格 |
+| [SEARCH.md](docs/design/SEARCH.md) | 筛选（AQS 子集）与递归搜索 |
 
 ## 解决方案结构
 
