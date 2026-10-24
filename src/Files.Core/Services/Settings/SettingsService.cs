@@ -144,6 +144,7 @@ public sealed class SettingsService
             "View.ShowExtensions" => Bool(Current.View.ShowExtensions),
             "View.ShowStatusBar" => Bool(Current.View.ShowStatusBar),
             "View.ShowDetailsPane" => Bool(Current.View.ShowDetailsPane),
+            "View.ShowNavigationPane" => Bool(Current.View.ShowNavigationPane),
             "View.RowHeight" => Current.View.RowHeight.ToString(),
             "View.AlternateRowColor" => Bool(Current.View.AlternateRowColor),
             "View.FolderFirst" => Bool(Current.View.FolderFirst),
@@ -237,6 +238,10 @@ public sealed class SettingsService
 
             case "View.ShowDetailsPane":
                 Current.View.ShowDetailsPane = ParseBool(value);
+                break;
+
+            case "View.ShowNavigationPane":
+                Current.View.ShowNavigationPane = ParseBool(value);
                 break;
 
             case "View.RowHeight":

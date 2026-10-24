@@ -94,6 +94,12 @@ public sealed class ViewSettings
     /// <summary>是否显示详情窗格。</summary>
     public bool ShowDetailsPane { get; set; }
 
+    /// <summary>是否显示导航窗格。</summary>
+    public bool ShowNavigationPane { get; set; } = true;
+
+    /// <summary>导航窗格宽度（像素）。</summary>
+    public double NavigationPaneWidth { get; set; } = 220;
+
     /// <summary>行高密度。</summary>
     public RowDensity RowHeight { get; set; } = RowDensity.Normal;
 

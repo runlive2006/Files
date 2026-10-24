@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:views="clr-namespace:Files.App.Views"
         mc:Ignorable="d"
         Title="Files" Height="640" Width="1100"
         Icon="Assets/Files.ico"
@@ -38,6 +39,8 @@
                 <MenuItem x:Name="MenuViewThumbnails" Header="缩略图" IsCheckable="True"
                           Click="OnViewThumbnailsClick" />
                 <Separator />
+                <MenuItem x:Name="MenuShowNavigationPane" Header="导航窗格" IsCheckable="True"
+                          IsChecked="True" Click="OnToggleNavigationPaneClick" InputGestureText="Ctrl+Shift+E" />
                 <MenuItem x:Name="MenuShowDetailsPane" Header="详情窗格" IsCheckable="True"
                           IsChecked="False" Click="OnToggleDetailsPaneClick" InputGestureText="Alt+Shift+P" />
             </MenuItem>
@@ -88,7 +91,24 @@
             </StatusBarItem>
         </StatusBar>
 
-        <!-- 布局树在此动态渲染 -->
-        <Grid x:Name="LayoutHost" />
+        <!-- 导航窗格 + 布局树 -->
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <views:NavigationPane x:Name="NavigationPanel" Grid.Column="0" Width="220" />
+
+            <GridSplitter Grid.Column="1" Width="4"
+                          HorizontalAlignment="Center" VerticalAlignment="Stretch"
+                          ResizeBehavior="PreviousAndNext"
+                          ResizeDirection="Columns"
+                          Background="#E8E8E8" />
+
+            <!-- 布局树在此动态渲染 -->
+            <Grid x:Name="LayoutHost" Grid.Column="2" />
+        </Grid>
     </DockPanel>
 </Window>

@@ -1,0 +1,55 @@
+<UserControl x:Class="Files.App.Views.NavigationPane"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+
+    <UserControl.Resources>
+        <!--
+            节点模板：分组标题加粗且不可选中；普通节点显示图标点与名称。
+            展开箭头由 HasChildren 决定（占位子节点保证了有箭头的节点才显示箭头）。
+        -->
+        <HierarchicalDataTemplate x:Key="NodeTemplate" ItemsSource="{Binding Children}">
+            <StackPanel Orientation="Horizontal" Margin="0,1">
+                <TextBlock Text="{Binding DisplayName}"
+                           VerticalAlignment="Center"
+                           MaxWidth="180"
+                           TextTrimming="CharacterEllipsis"
+                           ToolTip="{Binding Path}" />
+            </StackPanel>
+        </HierarchicalDataTemplate>
+
+        <Style x:Key="GroupNodeStyle" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="#555555" />
+            <Setter Property="Margin" Value="0,6,0,2" />
+        </Style>
+    </UserControl.Resources>
+
+    <DockPanel>
+        <TreeView x:Name="Tree"
+                  BorderThickness="0"
+                  Background="#FAFAFA"
+                  ItemsSource="{Binding RootNodes}"
+                  ItemTemplate="{StaticResource NodeTemplate}"
+                  SelectedItemChanged="OnSelectedItemChanged"
+                  VirtualizingStackPanel.IsVirtualizing="True"
+                  VirtualizingStackPanel.VirtualizationMode="Recycling">
+            <TreeView.ItemContainerStyle>
+                <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+                    <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                    <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
+                    <Setter Property="Padding" Value="2,1" />
+                    <Style.Triggers>
+                        <!-- 分组标题：不显示选中高亮，避免看起来可选 -->
+                        <DataTrigger Binding="{Binding IsGroup}" Value="True">
+                            <Setter Property="Focusable" Value="False" />
+                            <Setter Property="IsHitTestVisible" Value="False" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TreeView.ItemContainerStyle>
+        </TreeView>
+    </DockPanel>
+</UserControl>

@@ -198,6 +198,13 @@ public static class SettingCatalog
             DisplayName = "显示详情窗格",
             Description = "在窗口底部显示选中项的信息。",
             Kind = SettingKind.Boolean,
+        },        new()
+        {
+            Key = "View.ShowNavigationPane",
+            Group = "视图",
+            DisplayName = "显示导航窗格",
+            Description = "在窗口左侧显示目录树。",
+            Kind = SettingKind.Boolean,
         },
         new()
         {

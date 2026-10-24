@@ -57,6 +57,8 @@ public partial class MainWindow : Window
         MenuUseSystemIcons.IsChecked = true;
         ApplyChromeSettings();
 
+        NavigationPanel.NavigateRequested += OnNavigationRequested;
+
         _hudTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             Interval = TimeSpan.FromMilliseconds(500),
@@ -399,6 +401,9 @@ public partial class MainWindow : Window
 
         // 焦点栏切换后详情窗格要跟随新栏的选中项
         UpdateDetailsPane();
+
+        // 导航树也要跟随焦点栏的位置
+        SyncNavigationTree();
         UpdatePaneIndicator();
     }
 
@@ -471,6 +476,16 @@ public partial class MainWindow : Window
 
             SetFocusedIndex(next);
             _paneViews[next].FocusList();
+            e.Handled = true;
+            return;
+        }
+
+        // Ctrl+Shift+E：切换导航窗格（对齐 Explorer）
+        if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && e.Key == Key.E)
+        {
+            bool navNext = !_showNavigationPane;
+            _settings.Current.View.ShowNavigationPane = navNext;
+            SetNavigationPaneVisible(navNext);
             e.Handled = true;
             return;
         }
@@ -587,6 +602,13 @@ public partial class MainWindow : Window
 
         // 详情窗格状态：设置窗口与菜单任一修改都同步到同一处
         SetDetailsPaneVisible(view.ShowDetailsPane);
+
+        SetNavigationPaneVisible(view.ShowNavigationPane);
+
+        if (view.NavigationPaneWidth is >= 140 and <= 600)
+        {
+            NavigationPanel.Width = view.NavigationPaneWidth;
+        }
 
         foreach (PaneView pane in _paneViews)
         {
@@ -779,6 +801,49 @@ public partial class MainWindow : Window
         _detailsDebounce.Stop();
         _detailsDebounce.Start();
     }
+    // ---------- 导航窗格 ----------
+
+    private bool _showNavigationPane = true;
+
+    private void OnToggleNavigationPaneClick(object sender, RoutedEventArgs e)
+    {
+        bool visible = MenuShowNavigationPane.IsChecked;
+        _settings.Current.View.ShowNavigationPane = visible;
+        SetNavigationPaneVisible(visible);
+    }
+
+    /// <summary>显示/隐藏导航窗格。</summary>
+    private void SetNavigationPaneVisible(bool visible)
+    {
+        _showNavigationPane = visible;
+        MenuShowNavigationPane.IsChecked = visible;
+        NavigationPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// 点击导航树节点：作用于焦点栏的当前标签。
+    /// </summary>
+    private void OnNavigationRequested(object? sender, string path)
+    {
+        PaneView? pane = FocusedPane;
+        if (pane is null)
+        {
+            return;
+        }
+
+        _ = pane.ViewModel.NavigateAsync(path);
+    }
+
+    /// <summary>外部导航后，让导航树定位到当前目录。</summary>
+    private void SyncNavigationTree()
+    {
+        if (!_showNavigationPane)
+        {
+            return;
+        }
+
+        NavigationPanel.RevealPath(FocusedPane?.CurrentDirectory);
+    }
     // ---------- 设置窗口 ----------
 
     private void OnOpenSettingsClick(object sender, RoutedEventArgs e) => OpenSettings();
@@ -839,6 +904,10 @@ public partial class MainWindow : Window
             case "View.AlternateRowColor":
             case "View.ShowGridLines":
             case "View.FolderFirst":
+            case "View.ShowNavigationPane":
+                ApplyChromeSettings();
+                break;
+
             case "View.ShowDetailsPane":
                 ApplyChromeSettings();
                 break;
@@ -906,6 +975,12 @@ public partial class MainWindow : Window
         foreach (SplitNode split in LayoutFactory.CollectSplits(_layout))
         {
             settings.SplitRatios.Add(split.FirstRatio);
+        }
+
+        // 导航窗格宽度
+        if (NavigationPanel.Width is >= 140 and <= 600)
+        {
+            settings.View.NavigationPaneWidth = NavigationPanel.Width;
         }
 
         // 上次路径已由 Panes[0].Path 承载，不再单独保存
