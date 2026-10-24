@@ -71,7 +71,42 @@
 
 - 列表切换为「搜索结果」布局：多一列**路径**（否则同名文件无法区分）
 - 顶部显示进度：`已找到 128 项，已扫描 3,421 个文件…` + 取消按钮
-- 搜索期间**不阻塞**：结果边扫描边追加（批量追加，每 200ms 或每 500 项刷一次，避免 UI 抖动）
+- 搜索期间**不阻塞**：结果边扫描边追加
+
+**追加策略（修正）**：不能对 `ObservableCollection` 逐项 `Add` —— 每次 Add 都会触发
+`CollectionChanged`，5 万项会产生 5 万次通知，UI 必然卡死。现有架构（`TabViewModel.RebuildRows`）
+是全量 `Clear` + `Add`，直接复用同样不可行。
+
+改为**批量追加**：
+
+| 参数 | 值 | 说明 |
+| --- | --- | --- |
+| 刷新间隔 | 200ms | 定时器触发，不是每找到一项就刷 |
+| 单批上限 | 500 项 | 即使 200ms 内找到更多，也分批 |
+| 追加方式 | 一次性 `Add` 到后备 `List`，然后触发**一次** `Reset` 通知 | 见下 |
+
+具体做法：`TabViewModel` 增加一个「增量模式」——
+
+```csharp
+// 搜索结果专用：维护后备列表，批量同步到 ObservableCollection
+private readonly List<EntryRow> _pendingRows = [];
+
+public void FlushPendingRows()
+{
+    if (_pendingRows.Count == 0) return;
+
+    Rows.Clear();                       // 一次 Clear
+    foreach (var row in _pendingRows)   // 之后一次性重建
+        Rows.Add(row);
+
+    _pendingRows.Clear();
+}
+```
+
+> 代价是每次刷新会重建可见容器。对 5 万项、200ms 一次来说可接受（实测 10 万项重建约 131ms，
+> 而搜索场景的刷新量远小于此）。若实测有卡顿，再改为 `INotifyCollectionChanged` 的区间通知实现。
+
+- 搜索完成时做一次最终刷新，之后恢复普通模式
 
 ### 3.3 遍历策略
 
