@@ -18,6 +18,9 @@ namespace Files.App.ViewModels;
 public sealed class NavigationNodeViewModel : INotifyPropertyChanged
 {
     /// <summary>占位节点标记（仅用于让 TreeView 显示展开箭头）。</summary>
+    /// <summary>占位节点使用的构建器（不会被真正使用）。</summary>
+    private static readonly NavigationTreeBuilder SharedBuilder = new();
+
     private static readonly NavigationNodeViewModel Placeholder =
         new(new NavigationNode(NavigationNodeKind.Group, "加载中…", null, false), isPlaceholder: true);
 
@@ -30,7 +33,8 @@ public sealed class NavigationNodeViewModel : INotifyPropertyChanged
     {
         Node = node;
         IsPlaceholder = isPlaceholder;
-        _builder = new NavigationTreeBuilder();
+        // 占位节点不会枚举子项，但仍传入共享构建器以保持一致
+        _builder = SharedBuilder;
         Children = [];
     }
 

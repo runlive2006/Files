@@ -166,8 +166,9 @@ public sealed class RecursiveSearcher
                         }
                     }
 
-                    // 不跟随重解析点：既不搜索其内部，也不把它当目录展开
-                    if (isDirectory && !isReparse)
+                    // 重解析点需区分：真实链接不跟随（防循环），云占位符可进入。
+                    // 不加这个区分，云盘里的文件将完全搜不到。
+                    if (isDirectory && (!isReparse || ReparsePointPolicy.IsTraversable(info.FullName, info.Attributes)))
                     {
                         pending.Enqueue(info.FullName);
                     }

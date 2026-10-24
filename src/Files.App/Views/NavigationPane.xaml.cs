@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using Files.App.ViewModels;
 using Files.Core.Services;
+using Files.Interop;
 
 namespace Files.App.Views;
 
@@ -19,13 +20,17 @@ namespace Files.App.Views;
 /// </remarks>
 public partial class NavigationPane : UserControl
 {
-    private readonly NavigationTreeBuilder _builder = new();
+    private readonly NavigationTreeBuilder _builder;
     private bool _suppressSelectionEvent;
 
     /// <summary>创建导航窗格。</summary>
     public NavigationPane()
     {
         InitializeComponent();
+
+        // 云盘探测走 Shell：WPS 云盘等产品注册为命名空间扩展，
+        // 但内容存在于真实本地路径，因此拿到路径后可直接用普通文件 API
+        _builder = new NavigationTreeBuilder(new ShellCloudLocationProvider());
 
         RootNodes = [];
         DataContext = this;

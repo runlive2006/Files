@@ -16,6 +16,9 @@ public enum NavigationNodeKind
 
     /// <summary>普通文件夹（懒加载）。</summary>
     Folder,
+
+    /// <summary>云盘（映射到本地路径的云同步目录）。</summary>
+    Cloud,
 }
 
 /// <summary>
@@ -72,6 +75,12 @@ public sealed class NavigationNode
 /// </remarks>
 public sealed class NavigationTreeBuilder
 {
+    private readonly ICloudLocationProvider? _cloudProvider;
+
+    /// <summary>创建构建器。</summary>
+    /// <param name="cloudProvider">云盘探测；为 <see langword="null"/> 时不显示云盘节点。</param>
+    public NavigationTreeBuilder(ICloudLocationProvider? cloudProvider = null) => _cloudProvider = cloudProvider;
+
     /// <summary>
     /// 构建根级节点。
     /// </summary>
@@ -90,6 +99,26 @@ public sealed class NavigationTreeBuilder
         AddKnownFolder(nodes, Environment.SpecialFolder.MyPictures, "图片");
         AddKnownFolder(nodes, Environment.SpecialFolder.MyMusic, "音乐");
         AddKnownFolder(nodes, Environment.SpecialFolder.MyVideos, "视频");
+
+        // 云盘单独分组：与本地驱动器区分开，避免混淆
+        if (_cloudProvider is not null)
+        {
+            IReadOnlyList<CloudLocation> clouds = _cloudProvider.Detect();
+
+            if (clouds.Count > 0)
+            {
+                nodes.Add(new NavigationNode(NavigationNodeKind.Group, "云盘", null, false));
+
+                foreach (CloudLocation cloud in clouds)
+                {
+                    nodes.Add(new NavigationNode(
+                        NavigationNodeKind.Cloud,
+                        cloud.DisplayName,
+                        cloud.Path,
+                        hasChildren: true));
+                }
+            }
+        }
 
         if (includeDrives)
         {
